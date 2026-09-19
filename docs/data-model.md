@@ -1,52 +1,69 @@
-# Data Model
-
-## Relationship
+# Data model
 
 ```text
 Workspace
 └── Project
-    └── EventDefinition
+    ├── EventDefinition
+    ├── IngestionCredential
+    └── Event
 ```
 
-All current models use UUID primary keys and created/updated timestamps.
+## Workspace and Project
 
-## Workspace
+Workspace represents an organization; its key is globally unique in one deployment.
+Project represents a data/access boundary; its key is unique within its workspace.
+Both have UUID primary keys, names, activity flags, and created/updated timestamps.
+Inactive workspaces or projects cannot receive events.
 
-Represents an organization using the analytics platform. Its `key` is globally unique inside one deployed database.
-
-Fields:
-
-- `key`: stable machine-readable name;
-- `name`: display name;
-- `is_active`: disables use without deleting the record.
-
-## Project
-
-Represents a data and access boundary inside a workspace. It is not a source-code repository, deployment environment, or billed product.
-
-Fields:
-
-- `workspace`: owning workspace;
-- `key`: machine-readable name, unique inside the workspace;
-- `name`: display name;
-- `is_active`: disables use without deleting the record.
-
-All HappyFox products in the same analytics deployment initially share one local project. A standard event property identifies the business product.
+A project can receive events from multiple products. Deployment environments remain
+separate databases. Neither products nor environments are database models.
 
 ## EventDefinition
 
-Represents a known event name inside a project. It is documentation and discovery metadata, not a strict JSON Schema.
+Documentation and discovery metadata for an event name, unique within its project.
+Fields are `project`, `name`, `description`, `owner`, and status (`visible`,
+`verified`, or `hidden`), plus UUID primary key and created/updated timestamps.
 
-Fields:
+Successful ingestion discovers missing names automatically with status `visible`.
+Existing metadata is preserved. Definitions contain neither occurrences nor strict
+property schemas; events store their event name directly and do not depend on a
+foreign key to mutable catalog metadata.
 
-- `project`: owning project;
-- `name`: event name, unique inside the project;
-- `description`: human explanation;
-- `owner`: responsible team or person;
-- `status`: `visible`, `verified`, or `hidden`.
+## Event
 
-An event definition does not declare required properties and does not reject unknown event properties.
+- `id`: internal UUID primary key.
+- `project`: required project relation, protected against cascading project deletion.
+- `uuid`: producer event UUID, unique with `project`.
+- `event`: event name, up to 200 characters.
+- `distinct_id`: actor identifier, up to 400 characters.
+- `timestamp`: occurrence datetime, normalized to UTC.
+- `received_at`: platform receipt time; defaults to request arrival for ingestion.
+- `groups`: JSON object, including account identity when applicable.
+- `properties`: flexible JSON object, including product/version metadata.
+
+Events are immutable through normal application update paths. `received_at` supplies
+the ingestion timestamp; a redundant `created_at` and mutable `updated_at` are not
+needed. Controlled deletions remain possible, without database triggers.
+
+B-tree indexes cover `(project, timestamp)`, `(project, event, timestamp)`, and
+`(project, distinct_id, timestamp)`. The `(project, uuid)` constraint supports retry
+lookup. Arbitrary JSON properties have no indexes.
+
+## IngestionCredential
+
+- UUID `id`, required `project`, and human-readable `name`.
+- Unique indexed `prefix` for lookup; `secret_hash` for constant-time verification.
+- Independent `require_product` and `require_account` validation flags, default false.
+- `created_at`, `updated_at`, nullable `last_used_at`, and nullable `revoked_at`.
+
+`revoked_at = null` means active. Revocation cannot be reversed through the API.
+Rotation creates another row and leaves the previous credential active. Many active
+credentials can belong to one project. Only creation/rotation responses disclose a
+new full secret. `last_used_at` records successful authentication, even when the
+subsequent event fails validation.
 
 ## Not implemented
 
-There are currently no stored event, ingestion credential, person, account profile, identity mapping, metric, or MCP models.
+No persisted person, account profile, identity mapping, rejected-payload, metric,
+or MCP models are present. Rejection monitoring uses sanitized structured logs and
+log-derived counter samples.

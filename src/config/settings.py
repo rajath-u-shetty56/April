@@ -11,9 +11,7 @@ load_dotenv(BASE_DIR / ".env")
 SECRET_KEY = os.environ["DJANGO_SECRET_KEY"]
 DEBUG = os.environ.get("DJANGO_DEBUG", "false").lower() == "true"
 ALLOWED_HOSTS = [
-    host.strip()
-    for host in os.environ.get("DJANGO_ALLOWED_HOSTS", "").split(",")
-    if host.strip()
+    host.strip() for host in os.environ.get("DJANGO_ALLOWED_HOSTS", "").split(",") if host.strip()
 ]
 
 INSTALLED_APPS = [
@@ -27,6 +25,8 @@ INSTALLED_APPS = [
     "rest_framework.authtoken",
     "analytics_platform.catalog",
     "analytics_platform.event_catalog",
+    "analytics_platform.events",
+    "analytics_platform.ingestion",
 ]
 
 MIDDLEWARE = [
@@ -76,4 +76,23 @@ REST_FRAMEWORK = {
         "rest_framework.authentication.TokenAuthentication",
         "rest_framework.authentication.SessionAuthentication",
     ]
+}
+
+# Ingestion limits are bytes of UTF-8 JSON and a count of batch items.
+INGESTION_MAX_REQUEST_BYTES = int(os.environ.get("INGESTION_MAX_REQUEST_BYTES", 1048576))
+INGESTION_MAX_PROPERTY_BYTES = int(os.environ.get("INGESTION_MAX_PROPERTY_BYTES", 65536))
+INGESTION_MAX_BATCH_EVENTS = int(os.environ.get("INGESTION_MAX_BATCH_EVENTS", 500))
+
+# Rejection records are already JSON and contain a log-derived counter sample.
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "handlers": {"ingestion_console": {"class": "logging.StreamHandler"}},
+    "loggers": {
+        "analytics.ingestion": {
+            "handlers": ["ingestion_console"],
+            "level": "INFO",
+            "propagate": True,
+        },
+    },
 }
