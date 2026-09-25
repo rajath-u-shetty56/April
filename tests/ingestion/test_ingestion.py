@@ -301,6 +301,88 @@ def test_groupidentify_requires_valid_group_metadata(producer, event, properties
     assert events().count() == 0
 
 
+def test_grouped_event_creates_empty_profile(producer, event, project):
+    response = producer.post("/api/v1/capture/", event, format="json")
+
+    assert response.status_code == 201
+    profile = project.group_profiles.get(group_type="account", group_key="acme")
+    assert profile.properties == {}
+    assert profile.last_seen_at.isoformat() == "2026-09-17T10:30:00+00:00"
+
+
+def test_groupidentify_updates_profile_without_catalog_definition(producer, event, project):
+    event.update(
+        event="$groupidentify",
+        groups={},
+        properties={
+            "$group_type": "account",
+            "$group_key": "acme",
+            "$group_set": {"name": "Acme", "plan": "enterprise"},
+        },
+    )
+
+    response = producer.post("/api/v1/capture/", event, format="json")
+
+    assert response.status_code == 201
+    assert project.group_profiles.get().properties == {
+        "name": "Acme",
+        "plan": "enterprise",
+    }
+    assert project.event_definitions.count() == 0
+    assert events().get().event == "$groupidentify"
+
+
+def test_group_identification_does_not_retroactively_associate_events(
+    producer, event, project
+):
+    event["groups"] = {}
+    assert producer.post("/api/v1/capture/", event, format="json").status_code == 201
+    stored_id = events().get().pk
+    identify = {
+        **event,
+        "uuid": str(uuid4()),
+        "event": "$groupidentify",
+        "properties": {
+            "$group_type": "account",
+            "$group_key": "acme",
+            "$group_set": {"name": "Acme"},
+        },
+    }
+
+    assert producer.post("/api/v1/capture/", identify, format="json").status_code == 201
+
+    assert events().get(pk=stored_id).groups == {}
+    assert project.group_profiles.get().properties == {"name": "Acme"}
+
+
+def test_groupidentify_retry_and_conflict_do_not_repeat_or_leak_updates(
+    producer, event, project
+):
+    event.update(
+        event="$groupidentify",
+        groups={},
+        properties={
+            "$group_type": "account",
+            "$group_key": "acme",
+            "$group_set": {"plan": "trial"},
+        },
+    )
+    assert producer.post("/api/v1/capture/", event, format="json").status_code == 201
+
+    retry = producer.post("/api/v1/capture/", event, format="json")
+    assert retry.status_code == 200
+    assert retry.data["duplicate"] is True
+
+    event["properties"]["$group_set"] = {"plan": "enterprise", "leaked": True}
+    conflict = producer.post("/api/v1/capture/", event, format="json")
+
+    assert conflict.status_code == 409
+    assert conflict.data["code"] == "UUID_CONFLICT"
+    assert project.group_profiles.get().properties == {"plan": "trial"}
+    assert project.event_definitions.count() == 0
+    assert events().count() == 1
+
+
 def test_limits(producer, event, settings):
     settings.INGESTION_MAX_BATCH_EVENTS = 1
     response = producer.post("/api/v1/bulk/", {"events": [event, event]}, format="json")
@@ -437,6 +519,9 @@ def test_concurrent_requests(project, event, mode, monkeypatch):
     from analytics_platform.ingestion.service import ingest_event
 
     assert connection.vendor == "postgresql", "Concurrency tests require PostgreSQL"
+    # This test synchronizes event-definition discovery. Grouped events for the
+    # same profile are intentionally serialized by the profile row lock.
+    event["groups"] = {}
     credential, _ = create_credential(project, name="first")
     second, _ = create_credential(project, name="second")
     other = {**event}

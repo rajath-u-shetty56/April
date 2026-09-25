@@ -7,7 +7,12 @@ from django.utils import timezone
 
 from analytics_platform.event_catalog.models import EventDefinition
 from analytics_platform.events.models import Event
-from analytics_platform.ingestion.contracts import json_bytes, validate_event
+from analytics_platform.group_analytics.services import identify_group, touch_event_groups
+from analytics_platform.ingestion.contracts import (
+    group_identify_values,
+    json_bytes,
+    validate_event,
+)
 from analytics_platform.ingestion.errors import IngestionError
 from analytics_platform.ingestion.models import IngestionCredential
 from analytics_platform.ingestion.monitoring import record_rejection, safe_uuid
@@ -66,11 +71,26 @@ def persist_event(credential, value, received_at):
             if not same_event(stored, value):
                 raise IngestionError("UUID_CONFLICT", "uuid", 409)
             return {"uuid": str(stored.uuid), "status": "accepted", "duplicate": True}
-        EventDefinition.objects.get_or_create(
-            project=credential.project,
-            product_key=value["properties"].get("product", ""),
-            name=value["event"],
-        )
+        identify_values = group_identify_values(value)
+        if identify_values is not None:
+            group_type, group_key, group_properties = identify_values
+            identify_group(
+                project=credential.project,
+                group_type=group_type,
+                group_key=group_key,
+                properties=group_properties,
+            )
+        else:
+            touch_event_groups(
+                project=credential.project,
+                groups=value["groups"],
+                occurred_at=value.get("timestamp", received_at),
+            )
+            EventDefinition.objects.get_or_create(
+                project=credential.project,
+                product_key=value["properties"].get("product", ""),
+                name=value["event"],
+            )
         stored, created = Event.objects.get_or_create(
             project=credential.project,
             uuid=event_uuid,
