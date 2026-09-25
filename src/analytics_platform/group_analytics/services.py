@@ -14,7 +14,9 @@ def _locked_profile(*, project, group_type, group_key):
 
 @transaction.atomic
 def touch_event_groups(*, project, groups, occurred_at):
-    for group_type, group_key in groups.items():
+    # A deterministic order prevents two multi-group events from taking the
+    # same profile row locks in opposite orders.
+    for group_type, group_key in sorted(groups.items()):
         profile = _locked_profile(
             project=project,
             group_type=group_type,

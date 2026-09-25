@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 import pytest
 from django.db import IntegrityError, close_old_connections, connection, connections
 
+from analytics_platform.group_analytics import services
 from analytics_platform.group_analytics.models import GroupProfile
 from analytics_platform.group_analytics.services import identify_group, touch_event_groups
 
@@ -56,6 +57,28 @@ def test_identify_merges_current_properties(project):
         "name": "Acme",
         "plan": "enterprise",
     }
+
+
+def test_touch_acquires_multiple_group_locks_in_stable_order(project, monkeypatch):
+    occurred_at = datetime(2026, 9, 25, tzinfo=UTC)
+    calls = []
+
+    class UnchangedProfile:
+        last_seen_at = occurred_at
+
+    def record_lock(*, project, group_type, group_key):
+        calls.append((group_type, group_key))
+        return UnchangedProfile()
+
+    monkeypatch.setattr(services, "_locked_profile", record_lock)
+
+    touch_event_groups(
+        project=project,
+        groups={"team": "support", "account": "acme"},
+        occurred_at=occurred_at,
+    )
+
+    assert calls == [("account", "acme"), ("team", "support")]
 
 
 @pytest.mark.django_db(transaction=True)
