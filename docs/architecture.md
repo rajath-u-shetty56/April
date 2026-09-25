@@ -68,10 +68,13 @@ The combination of `project` and `uuid` is unique:
 - The database constraint remains the final protection if two requests with the
   same UUID arrive at the same time.
 
-Event names are discovered automatically. The combination of `project` and
-event name is unique in `EventDefinition`. Concurrent requests can therefore
-discover the same event without creating duplicate definitions. Ingestion never
-overwrites an existing definition's status, owner, or description.
+Event names are discovered automatically. The combination of `project`, product
+key, and event name is unique in `EventDefinition`. The product key is copied from
+`properties.product`, or left empty for project-wide events that do not supply a
+product. This keeps identically named events from different products separate in
+the catalog. Concurrent requests can still discover the same product event without
+creating duplicate definitions. Ingestion never overwrites an existing
+definition's status, owner, or description.
 
 Storage errors during event processing roll back that event and return a
 sanitized error. Database error details and event data are not returned to the

@@ -4,6 +4,7 @@ from datetime import UTC
 from django.conf import settings
 from rest_framework import serializers
 
+from analytics_platform.event_catalog.models import PRODUCT_KEY_MAX_LENGTH
 from analytics_platform.ingestion.errors import IngestionError
 
 
@@ -56,7 +57,7 @@ def json_bytes(value):
     return encoded.encode("utf-8")
 
 
-def validate_event(payload, credential):
+def validate_event(payload):
     if not isinstance(payload, dict):
         raise IngestionError("INVALID_ENVELOPE")
     if set(payload) - set(EventPayloadSerializer().fields):
@@ -73,12 +74,13 @@ def validate_event(payload, credential):
             raise IngestionError("INVALID_" + field.upper(), field) from error
         if field == "properties" and size > settings.INGESTION_MAX_PROPERTY_BYTES:
             raise IngestionError("PROPERTIES_TOO_LARGE", field, 413)
-    for required, container, key in (
-        (credential.require_product, "properties", "product"),
-        (credential.require_account, "groups", "account"),
-    ):
-        if required:
-            item = value[container].get(key)
-            if not isinstance(item, str) or not item.strip():
-                raise IngestionError("REQUIRED_PROPERTY", f"{container}.{key}")
+    if "product" in value["properties"]:
+        product_key = value["properties"]["product"]
+        if (
+            not isinstance(product_key, str)
+            or not product_key.strip()
+            or product_key != product_key.strip()
+            or len(product_key) > PRODUCT_KEY_MAX_LENGTH
+        ):
+            raise IngestionError("INVALID_PROPERTIES", "properties.product")
     return value

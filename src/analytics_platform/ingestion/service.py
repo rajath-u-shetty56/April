@@ -66,7 +66,11 @@ def persist_event(credential, value, received_at):
             if not same_event(stored, value):
                 raise IngestionError("UUID_CONFLICT", "uuid", 409)
             return {"uuid": str(stored.uuid), "status": "accepted", "duplicate": True}
-        EventDefinition.objects.get_or_create(project=credential.project, name=value["event"])
+        EventDefinition.objects.get_or_create(
+            project=credential.project,
+            product_key=value["properties"].get("product", ""),
+            name=value["event"],
+        )
         stored, created = Event.objects.get_or_create(
             project=credential.project,
             uuid=event_uuid,
@@ -88,7 +92,7 @@ def persist_event(credential, value, received_at):
 def ingest_event(credential, payload, *, request_id, received_at=None):
     received_at = received_at or timezone.now()
     try:
-        value = validate_event(payload, credential)
+        value = validate_event(payload)
         # Bound direct service calls as well as HTTP requests.
         if len(json_bytes(payload)) > settings.INGESTION_MAX_REQUEST_BYTES:
             raise IngestionError("REQUEST_TOO_LARGE", status_code=413)

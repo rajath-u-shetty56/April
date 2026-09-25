@@ -33,8 +33,10 @@ any unrecognized top-level envelope field, it is rejected as
 - `groups`: optional JSON object, default `{}`. `groups.account` is the customer
   account, separate from the actor. HappyFox producers use the immutable Helpdesk
   subdomain, such as `acme`. Additional group types are allowed.
-- `properties`: optional JSON object, default `{}`. HappyFox producers include a
-  nonblank `properties.product`, such as `helpdesk` or `contact_center`.
+- `properties`: optional JSON object, default `{}`. When supplied,
+  `properties.product` is a trimmed, nonblank string of at most 80 characters,
+  such as `helpdesk` or `contact_center`. It becomes the event definition's
+  `product_key`. HappyFox producers include it on every event.
 
 Credentials have independent `require_product` and `require_account` flags.
 Enable both for HappyFox integrations. Generic credentials default both to false.

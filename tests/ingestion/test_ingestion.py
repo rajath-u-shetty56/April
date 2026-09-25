@@ -81,6 +81,7 @@ def test_capture_persists_identity_and_flexible_properties(producer, event, proj
     assert before <= row.received_at <= timezone.now()
     definition = project.event_definitions.get()
     assert definition.name == event["event"]
+    assert definition.product_key == "helpdesk"
     assert definition.status == "visible"
     credential = apps.get_model("ingestion", "IngestionCredential").objects.get()
     assert credential.last_used_at is not None
@@ -106,6 +107,7 @@ def test_generated_uuid_and_omitted_timestamp_retry(producer):
     row = events().get()
     assert row.groups == row.properties == {}
     assert row.timestamp == row.received_at
+    assert row.project.event_definitions.get().product_key == ""
     response = producer.post("/api/v1/capture/", payload, format="json")
     assert response.status_code == 200
     assert events().count() == 1
@@ -186,32 +188,34 @@ def test_revocation_and_rotation(staff, project, credential, producer, event):
     assert producer.post("/api/v1/capture/", event, format="json").status_code == 200
 
 
-@pytest.mark.parametrize(
-    ("product", "account", "field"),
-    [
-        (True, False, "properties.product"),
-        (False, True, "groups.account"),
-    ],
-)
-def test_configurable_happyfox_requirements(staff, project, product, account, field):
+def test_credential_contract_has_no_event_requirement_switches(staff, project):
     response = staff.post(
         f"/api/v1/projects/{project.pk}/ingestion-credentials/",
-        {"name": "integration", "require_product": product, "require_account": account},
+        {"name": "integration"},
         format="json",
     )
     assert response.status_code == 201
-    client = APIClient()
-    client.credentials(HTTP_AUTHORIZATION=f"Bearer {response.data['secret']}")
-    response = client.post(
-        "/api/v1/capture/", {"event": "action", "distinct_id": "system:workflows"}, format="json"
+    assert "require_product" not in response.data
+    assert "require_account" not in response.data
+
+
+@pytest.mark.parametrize("removed_field", ["require_product", "require_account"])
+def test_credential_rejects_removed_requirement_switches(staff, project, removed_field):
+    response = staff.post(
+        f"/api/v1/projects/{project.pk}/ingestion-credentials/",
+        {"name": "integration", removed_field: True},
+        format="json",
     )
     assert response.status_code == 400
-    assert response.data["field"] == field
 
 
 def test_existing_definition_metadata_preserved(producer, project, event):
     definition = project.event_definitions.create(
-        name=event["event"], status="hidden", owner="team", description="keep"
+        product_key="helpdesk",
+        name=event["event"],
+        status="hidden",
+        owner="team",
+        description="keep",
     )
     assert producer.post("/api/v1/capture/", event, format="json").status_code == 201
     definition.refresh_from_db()
@@ -220,6 +224,36 @@ def test_existing_definition_metadata_preserved(producer, project, event):
         "team",
         "keep",
     )
+
+
+def test_same_event_name_discovers_separate_product_definitions(producer, event, project):
+    assert producer.post("/api/v1/capture/", event, format="json").status_code == 201
+    bi_event = {
+        **event,
+        "uuid": str(uuid4()),
+        "properties": {**event["properties"], "product": "bi"},
+    }
+
+    assert producer.post("/api/v1/capture/", bi_event, format="json").status_code == 201
+
+    assert set(
+        project.event_definitions.values_list("product_key", "name")
+    ) == {
+        ("helpdesk", "ticket_created"),
+        ("bi", "ticket_created"),
+    }
+
+
+@pytest.mark.parametrize("product", ["", " helpdesk", 42, None, ["helpdesk"], "x" * 81])
+def test_product_classification_must_be_a_valid_key(producer, event, product):
+    event["properties"]["product"] = product
+
+    response = producer.post("/api/v1/capture/", event, format="json")
+
+    assert response.status_code == 400
+    assert response.data["code"] == "INVALID_PROPERTIES"
+    assert response.data["field"] == "properties.product"
+    assert events().count() == 0
 
 
 def test_limits(producer, event, settings):
@@ -504,17 +538,13 @@ def test_uuid_requires_valid_string(producer, event, value):
     assert response.data["code"] == "INVALID_UUID"
 
 
-def test_both_happyfox_requirements_and_rotation(staff, project, event):
+def test_rotation_preserves_credential_name_without_policy_switches(staff, project):
     url = f"/api/v1/projects/{project.pk}/ingestion-credentials/"
-    response = staff.post(
-        url, {"name": "HappyFox", "require_product": True, "require_account": True}, format="json"
-    )
+    response = staff.post(url, {"name": "HappyFox"}, format="json")
     assert response.status_code == 201
-    client = APIClient()
-    client.credentials(HTTP_AUTHORIZATION=f"Bearer {response.data['secret']}")
-    assert client.post("/api/v1/capture/", event, format="json").status_code == 201
     rotated = staff.post(url + response.data["id"] + "/rotate/")
     assert rotated.status_code == 201
-    assert rotated.data["require_product"] is True
-    assert rotated.data["require_account"] is True
+    assert rotated.data["name"] == "HappyFox"
+    assert "require_product" not in rotated.data
+    assert "require_account" not in rotated.data
     assert rotated.data["revoked_at"] is None

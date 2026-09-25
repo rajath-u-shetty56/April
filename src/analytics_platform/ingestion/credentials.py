@@ -9,7 +9,7 @@ from rest_framework.exceptions import AuthenticationFailed
 from analytics_platform.ingestion.models import IngestionCredential
 
 
-def create_credential(project, *, name, require_product=False, require_account=False):
+def create_credential(project, *, name):
     prefix = "ing_" + secrets.token_hex(12)
     secret = prefix + "." + secrets.token_urlsafe(32)
     credential = IngestionCredential.objects.create(
@@ -17,8 +17,6 @@ def create_credential(project, *, name, require_product=False, require_account=F
         name=name,
         prefix=prefix,
         secret_hash=hashlib.sha256(secret.encode()).hexdigest(),
-        require_product=require_product,
-        require_account=require_account,
     )
     return credential, secret
 
@@ -35,12 +33,7 @@ def revoke_credential(credential):
 
 def rotate_credential(credential):
     # Rotation deliberately leaves the old credential's lifecycle unchanged.
-    return create_credential(
-        credential.project,
-        name=credential.name,
-        require_product=credential.require_product,
-        require_account=credential.require_account,
-    )
+    return create_credential(credential.project, name=credential.name)
 
 
 def authenticate_secret(secret):

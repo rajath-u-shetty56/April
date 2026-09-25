@@ -20,14 +20,18 @@ separate databases. Neither products nor environments are database models.
 
 ## EventDefinition
 
-Documentation and discovery metadata for an event name, unique within its project.
-Fields are `project`, `name`, `description`, `owner`, and status (`visible`,
-`verified`, or `hidden`), plus UUID primary key and created/updated timestamps.
+Documentation and discovery metadata for a product's event name. Fields are
+`project`, optional `product_key`, `name`, `description`, `owner`, and status
+(`visible`, `verified`, or `hidden`), plus UUID primary key and created/updated
+timestamps. The combination of `project`, `product_key`, and `name` is unique, so
+two products can document the same event name independently. An empty product key
+represents a project-wide event whose producer supplied no product classification.
 
-Successful ingestion discovers missing names automatically with status `visible`.
-Existing metadata is preserved. Definitions contain neither occurrences nor strict
-property schemas; events store their event name directly and do not depend on a
-foreign key to mutable catalog metadata.
+Successful ingestion copies `properties.product` into `product_key` and discovers
+missing definitions automatically with status `visible`. Existing metadata is
+preserved. Definitions contain neither occurrences nor strict property schemas;
+events store their event name directly and do not depend on a foreign key to
+mutable catalog metadata.
 
 ## Event
 

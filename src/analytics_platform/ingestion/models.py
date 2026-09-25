@@ -11,8 +11,6 @@ class IngestionCredential(UUIDTimeStampedModel):
     name = models.CharField(max_length=160)
     prefix = models.CharField(max_length=32, unique=True, editable=False)
     secret_hash = models.CharField(max_length=64, editable=False)
-    require_product = models.BooleanField(default=False)
-    require_account = models.BooleanField(default=False)
     last_used_at = models.DateTimeField(null=True, blank=True, editable=False)
     revoked_at = models.DateTimeField(null=True, blank=True, editable=False)
 

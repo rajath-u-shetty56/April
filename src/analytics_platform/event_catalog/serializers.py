@@ -8,10 +8,26 @@ class EventDefinitionSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = EventDefinition
-        fields = ("id", "project_id", "name", "description", "owner", "status")
+        fields = (
+            "id",
+            "project_id",
+            "product_key",
+            "name",
+            "description",
+            "owner",
+            "status",
+        )
 
-    def validate_name(self, value):
+    def validate(self, attrs):
         project = self.context.get("project")
-        if project and project.event_definitions.filter(name=value).exists():
-            raise serializers.ValidationError("This event already exists in the project.")
-        return value
+        product_key = attrs.get("product_key", "")
+        name = attrs.get("name")
+        if (
+            project
+            and name
+            and project.event_definitions.filter(product_key=product_key, name=name).exists()
+        ):
+            raise serializers.ValidationError(
+                {"name": "This event already exists for the product in the project."}
+            )
+        return attrs

@@ -83,6 +83,7 @@ def test_staff_can_create_event_definition(api_client, staff_user, project):
     response = api_client.post(
         f"/api/v1/projects/{project.id}/event-definitions/",
         {
+            "product_key": "contact_center",
             "name": "call_completed",
             "description": "A Contact Center call was completed",
             "owner": "contact-center",
@@ -92,6 +93,7 @@ def test_staff_can_create_event_definition(api_client, staff_user, project):
     )
 
     assert response.status_code == 201
+    assert response.data["product_key"] == "contact_center"
     assert response.data["name"] == "call_completed"
     assert response.data["status"] == "verified"
     assert "json_schema" not in response.data
@@ -151,19 +153,42 @@ def test_event_definitions_are_only_exposed_through_a_project(
 
 
 @pytest.mark.django_db
-def test_duplicate_event_name_returns_validation_error(
+def test_duplicate_event_name_in_same_product_returns_validation_error(
     api_client,
     staff_user,
     project,
 ):
     api_client.force_authenticate(staff_user)
-    EventDefinition.objects.create(project=project, name="call_completed")
+    EventDefinition.objects.create(
+        project=project,
+        product_key="contact_center",
+        name="call_completed",
+    )
 
     response = api_client.post(
         f"/api/v1/projects/{project.id}/event-definitions/",
-        {"name": "call_completed"},
+        {"product_key": "contact_center", "name": "call_completed"},
         format="json",
     )
 
     assert response.status_code == 400
     assert "name" in response.data
+
+
+@pytest.mark.django_db
+def test_same_event_name_can_be_created_for_another_product(api_client, staff_user, project):
+    api_client.force_authenticate(staff_user)
+    EventDefinition.objects.create(
+        project=project,
+        product_key="helpdesk",
+        name="report_created",
+    )
+
+    response = api_client.post(
+        f"/api/v1/projects/{project.id}/event-definitions/",
+        {"product_key": "bi", "name": "report_created"},
+        format="json",
+    )
+
+    assert response.status_code == 201
+    assert response.data["product_key"] == "bi"
