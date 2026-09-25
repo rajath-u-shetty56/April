@@ -19,10 +19,9 @@ with `hmac.compare_digest`, and reveal the secret only at creation or rotation.
 Rotation creates a new credential and leaves the old credential active until
 it is explicitly revoked. Revoked credentials cannot be reactivated.
 
-The credential can require `properties.product` and/or `groups.account` to be
-present. These rules are configurable rather than built in as HappyFox-only
-platform assumptions. At present, `require_product` checks for a nonblank
-string; it does not bind the credential to one specific product value.
+Credentials do not carry product-specific validation switches. Product and group
+context remain optional parts of the common event contract. Producer teams are
+responsible for following the agreed naming conventions when those fields matter.
 
 ## How this differs from PostHog
 
@@ -53,8 +52,8 @@ deployments and databases isolate test, staging, and production data.
   replacing a shared project token used by every producer.
 - The credential grants ingestion only. It cannot authorize catalog, query, or
   staff-management APIs, unlike a broad user API key.
-- Credential-level validation can require fields used by the HappyFox pilot
-  while leaving generic event validation free of hard-coded product rules.
+- The credential model remains generic and does not encode HappyFox-specific
+  product or account requirements.
 - The design is small enough for synchronous PostgreSQL ingestion and can be
   changed independently from a future queue or analytical storage backend.
 
@@ -66,9 +65,8 @@ deployments and databases isolate test, staging, and production data.
   would need a separate public-token design and appropriate abuse controls; it
   must not expose or reuse these credentials.
 - **The key does not prove event semantics.** A producer holding a valid key
-  can still submit incorrect event data. `require_product` only checks that a
-  value exists; it does not enforce that a given key represents, for example,
-  `helpdesk` rather than `workflows`.
+  can still submit incorrect product or group data. A credential identifies the
+  destination project, not the business meaning or source of every event.
 - **Accepted events do not currently store the credential ID.** Separate keys
   provide independent lifecycle control, but not a durable per-event source
   audit trail. If that becomes a requirement, bind credentials to an expected

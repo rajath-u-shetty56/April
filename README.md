@@ -11,6 +11,7 @@ src/analytics_platform/
 ├── catalog/         # Workspaces and projects
 ├── event_catalog/   # Known event names
 ├── events/          # Persisted event occurrences
+├── group_analytics/ # Current account, organization, or team profiles
 ├── ingestion/       # Credentials, capture, bulk, validation and deduplication
 └── common/          # Shared model behavior
 ```
@@ -56,9 +57,8 @@ Producers use project ingestion credentials as `Authorization: Bearer <ingestion
 - `POST /api/v1/bulk/` — independently committed items with ordered acceptance/rejection results.
 
 Create a named credential through the staff API and store its returned `secret`:
-it is only disclosed on creation or rotation. For HappyFox integrations set both
-`require_product: true` and `require_account: true`. Rotation permits an overlap
-period; explicitly revoke the old credential after migrating the producer.
+it is only disclosed on creation or rotation. Rotation permits an overlap period;
+explicitly revoke the old credential after migrating the producer.
 
 See the [event contract](docs/event-contract.md) for payloads, retry semantics,
 limits, and error codes, and [architecture](docs/architecture.md) for transaction

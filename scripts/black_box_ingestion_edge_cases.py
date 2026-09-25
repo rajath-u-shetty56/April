@@ -187,6 +187,21 @@ def event(*, account, product, name, distinct_id, timestamp=None, event_uuid=Non
     }
 
 
+def group_identify(*, group_type, group_key, properties, event_uuid=None):
+    return {
+        "uuid": event_uuid or str(uuid.uuid4()),
+        "event": "$groupidentify",
+        "distinct_id": "system:group-profile",
+        "timestamp": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+        "groups": {},
+        "properties": {
+            "$group_type": group_type,
+            "$group_key": group_key,
+            "$group_set": properties,
+        },
+    }
+
+
 def validate_configuration():
     key = os.environ.get("ANALYTICS_INGESTION_KEY", "")
     if not key.strip() or any(character in key for character in "\r\n"):
@@ -209,10 +224,6 @@ def validate_configuration():
     if not math.isfinite(timeout) or timeout <= 0:
         raise ValueError("ANALYTICS_TIMEOUT_SECONDS must be finite and positive")
 
-    required_context = os.environ.get("ANALYTICS_EXPECT_REQUIRED_CONTEXT", "true").lower()
-    if required_context not in ("true", "false"):
-        raise ValueError("ANALYTICS_EXPECT_REQUIRED_CONTEXT must be true or false")
-
     max_property_bytes = int(os.environ.get("ANALYTICS_MAX_PROPERTY_BYTES", "65536"))
     max_request_bytes = int(os.environ.get("ANALYTICS_MAX_REQUEST_BYTES", "1048576"))
     max_batch_events = int(os.environ.get("ANALYTICS_MAX_BATCH_EVENTS", "500"))
@@ -222,7 +233,6 @@ def validate_configuration():
         "key": key,
         "base_url": base_url,
         "timeout": timeout,
-        "required_context": required_context == "true",
         "max_property_bytes": max_property_bytes,
         "max_request_bytes": max_request_bytes,
         "max_batch_events": max_batch_events,
@@ -407,7 +417,7 @@ def run_envelope_validation_cases(runner, account):
     )
 
 
-def run_context_cases(runner, account, required_context):
+def run_context_cases(runner, account):
     base = event(
         account=account,
         product="helpdesk",
@@ -435,39 +445,130 @@ def run_context_cases(runner, account, required_context):
             },
         )
 
-    if required_context:
-        no_product = copy.deepcopy(base)
-        del no_product["properties"]["product"]
+    no_product = copy.deepcopy(base)
+    del no_product["properties"]["product"]
+    runner.check(
+        "23a. Product classification is optional",
+        "/api/v1/capture/",
+        201,
+        payload=no_product,
+        expected={"status": "accepted", "duplicate": False},
+    )
+    no_groups = copy.deepcopy(base)
+    no_groups["uuid"] = str(uuid.uuid4())
+    no_groups["groups"] = {}
+    runner.check(
+        "23b. Group association is optional",
+        "/api/v1/capture/",
+        201,
+        payload=no_groups,
+        expected={"status": "accepted", "duplicate": False},
+    )
+
+
+def run_group_cases(runner, account):
+    group_key = f"{account}-{uuid.uuid4().hex[:12]}"
+    first = group_identify(
+        group_type="account",
+        group_key=group_key,
+        properties={"name": "Edge Case Account", "plan": "trial"},
+    )
+    runner.check(
+        "G1. Identify an account group",
+        "/api/v1/capture/",
+        201,
+        payload=first,
+        expected={"status": "accepted", "duplicate": False},
+    )
+
+    grouped = event(
+        account=group_key,
+        product="helpdesk",
+        name="edge_case_grouped_business_action",
+        distinct_id="helpdesk:agent:47",
+    )
+    runner.check(
+        "G2. Associate a business event with the account",
+        "/api/v1/capture/",
+        201,
+        payload=grouped,
+        expected={"status": "accepted", "duplicate": False},
+    )
+
+    update = group_identify(
+        group_type="account",
+        group_key=group_key,
+        properties={"plan": "enterprise"},
+    )
+    runner.check(
+        "G3. Merge a current group property",
+        "/api/v1/capture/",
+        201,
+        payload=update,
+        expected={"status": "accepted", "duplicate": False},
+    )
+    runner.check(
+        "G4. Retry the original group identification",
+        "/api/v1/capture/",
+        200,
+        payload=first,
+        expected={"status": "accepted", "duplicate": True},
+    )
+
+    conflict = copy.deepcopy(first)
+    conflict["properties"]["$group_set"]["plan"] = "conflicting"
+    runner.check(
+        "G5. Reject conflicting group identification UUID",
+        "/api/v1/capture/",
+        409,
+        payload=conflict,
+        expected={"status": "rejected", "code": "UUID_CONFLICT", "field": "uuid"},
+    )
+
+    malformed = [
+        ("type", group_identify(group_type="", group_key=group_key, properties={})),
+        ("key", group_identify(group_type="account", group_key=17, properties={})),
+        ("property set", group_identify(group_type="account", group_key=group_key, properties=[])),
+    ]
+    for label, payload in malformed:
         runner.check(
-            "23a. Enforce required product",
+            f"G6. Reject malformed group {label}",
             "/api/v1/capture/",
             400,
-            payload=no_product,
-            expected={
-                "status": "rejected",
-                "code": "REQUIRED_PROPERTY",
-                "field": "properties.product",
-            },
+            payload=payload,
+            expected={"status": "rejected", "code": "INVALID_GROUP_IDENTIFY"},
         )
-        for suffix, account_value in (("missing", _MISSING), ("blank", ""), ("numeric", 17)):
-            payload = copy.deepcopy(base)
-            if account_value is _MISSING:
-                del payload["groups"]["account"]
-            else:
-                payload["groups"]["account"] = account_value
-            runner.check(
-                f"23.{suffix}. Enforce required {suffix} account",
-                "/api/v1/capture/",
-                400,
-                payload=payload,
-                expected={
-                    "status": "rejected",
-                    "code": "REQUIRED_PROPERTY",
-                    "field": "groups.account",
-                },
-            )
-    else:
-        print("\n23. Required product/account checks: SKIPPED by configuration")
+
+    bulk_identify = group_identify(
+        group_type="team",
+        group_key=f"support-{uuid.uuid4().hex[:8]}",
+        properties={"name": "Support"},
+    )
+    bulk_invalid = group_identify(
+        group_type="company",
+        group_key="must-not-exist",
+        properties={},
+    )
+    del bulk_invalid["properties"]["$group_set"]
+    bulk_grouped = copy.deepcopy(grouped)
+    bulk_grouped["uuid"] = str(uuid.uuid4())
+    result = runner.request(
+        "/api/v1/bulk/",
+        payload={"events": [bulk_identify, bulk_invalid, bulk_grouped]},
+    )
+    failures = runner.response_failures(
+        result,
+        expected_status=200,
+        expected={"accepted": 2, "rejected": 1},
+    )
+    results = result.body.get("results") if isinstance(result.body, dict) else None
+    if not isinstance(results, list) or [item.get("status") for item in results] != [
+        "accepted",
+        "rejected",
+        "accepted",
+    ]:
+        failures.append("group bulk results did not preserve acceptance order")
+    runner.custom("G7. Mixed group bulk preserves partial success", result, failures)
 
 
 def run_transport_and_limit_cases(runner, account, config):
@@ -678,7 +779,7 @@ def main():
     except (ValueError, OverflowError):
         print(
             "Configuration error: check ANALYTICS_INGESTION_KEY, ANALYTICS_BASE_URL, "
-            "ANALYTICS_TIMEOUT_SECONDS, ANALYTICS_EXPECT_REQUIRED_CONTEXT, and limit values.",
+            "ANALYTICS_TIMEOUT_SECONDS, and limit values.",
             file=sys.stderr,
         )
         return 2
@@ -692,7 +793,8 @@ def main():
     runner.check("1. Health check", "/health/", 200, method="GET", ingestion_response=False)
     run_success_and_idempotency_cases(runner, account)
     run_envelope_validation_cases(runner, account)
-    run_context_cases(runner, account, config["required_context"])
+    run_context_cases(runner, account)
+    run_group_cases(runner, account)
     run_transport_and_limit_cases(runner, account, config)
     run_bulk_case(runner, account)
     run_authentication_cases(runner, account)

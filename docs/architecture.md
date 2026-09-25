@@ -10,6 +10,7 @@ analytics_platform
 ├── catalog        # Workspaces and projects
 ├── event_catalog  # Known event names and their documentation
 ├── events         # Events that have been received and stored
+├── group_analytics # Current project-scoped group profiles
 ├── ingestion      # Credentials, authentication, validation, and ingestion
 └── common         # Shared model fields such as UUIDs and timestamps
 ```
@@ -28,7 +29,7 @@ Request
   → authenticate the ingestion credential
   → validate the event envelope
   → check whether the event was already received
-  → discover its event definition
+  → update its group profile or discover its business event definition
   → store the event
   → commit the PostgreSQL transaction
   → return the result
@@ -79,6 +80,26 @@ definition's status, owner, or description.
 Storage errors during event processing roll back that event and return a
 sanitized error. Database error details and event data are not returned to the
 producer.
+
+## Group analytics
+
+An event's `groups` object records explicit associations as `group type → group
+key`. Ordinary grouped events create or touch a project-scoped `GroupProfile` and
+advance its `last_seen_at` only when the event occurrence time is newer.
+
+The reserved `$groupidentify` event merges current properties into one profile.
+It goes through the same authentication, validation, UUID deduplication, and
+transactional storage path as every other event. It remains in immutable event
+storage, but is excluded from the business event catalog.
+
+Profile changes run only after the early duplicate/conflict check and in the same
+transaction as the event insert. Therefore a conflicting UUID or storage failure
+cannot leave a profile update behind. Concurrent changes to one profile use a row
+lock so separate property updates are not lost.
+
+No association is inferred. A group identified today is not written onto older
+events that arrived without it. Profile properties describe current state; business
+transitions that matter over time must be captured as events.
 
 ## Stored events are append-only
 

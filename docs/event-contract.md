@@ -30,23 +30,23 @@ any unrecognized top-level envelope field, it is rejected as
   duplicate occurrence.
 - `timestamp`: optional datetime. Offsets normalize to UTC; naive datetimes are
   interpreted as UTC. Omission uses the request receipt time.
-- `groups`: optional JSON object, default `{}`. `groups.account` is the customer
-  account, separate from the actor. HappyFox producers use the immutable Helpdesk
-  subdomain, such as `acme`. Additional group types are allowed.
+- `groups`: optional object mapping a group type to a group key, default `{}`.
+  For example, `{"account": "acme", "team": "support"}` associates that event
+  with both groups. Types and keys must be trimmed, nonblank strings. The default
+  limit is five groups per event. HappyFox producers can use the immutable
+  Helpdesk subdomain as the `account` key.
 - `properties`: optional JSON object, default `{}`. When supplied,
   `properties.product` is a trimmed, nonblank string of at most 80 characters,
   such as `helpdesk` or `contact_center`. It becomes the event definition's
   `product_key`. HappyFox producers include it on every event.
 
-Credentials have independent `require_product` and `require_account` flags.
-Enable both for HappyFox integrations. Generic credentials default both to false.
 Account-level cross-product analysis is supported within a project. User analysis
 remains within each product; no cross-product user matching or identity graph is
 implemented. Product/account conventions do not add database models.
 
 Business properties remain flexible, including nested objects and arrays. The
 platform does not enforce product-specific schemas or versions. Unknown envelope
-fields are rejected; unknown fields inside `properties` and `groups` are accepted.
+fields are rejected; flexible fields inside `properties` are accepted.
 JSON must be representable in PostgreSQL: non-finite numbers, NUL characters, and
 unpaired Unicode surrogates are rejected.
 
@@ -54,6 +54,42 @@ unpaired Unicode surrogates are rejected.
 without version validation, preserving the existing Contact Center convention.
 Adding an optional property does not need a new version; increment it for breaking
 meaning or property-type changes. A different business action gets a new event name.
+
+## Group associations and current properties
+
+`groups` on an ordinary event records which account, team, organization, or other
+business entity participated in that event. This association is stored on the
+immutable event and can be used for group-level filtering and aggregation.
+
+Current descriptive information about a group is updated through the reserved
+`$groupidentify` event on the same capture or bulk endpoints:
+
+```json
+{
+  "event": "$groupidentify",
+  "distinct_id": "system:group-profile",
+  "groups": {},
+  "properties": {
+    "$group_type": "account",
+    "$group_key": "acme",
+    "$group_set": {"name": "Acme", "plan": "enterprise"}
+  }
+}
+```
+
+`$group_set` is merged into the group's current properties. Existing keys not
+included in an update are preserved. The event itself is stored for retry and
+audit behavior, but it is not added to the business `EventDefinition` catalog.
+
+The two concepts are deliberately separate:
+
+- `groups` on a business event associates that one event with a group.
+- `$groupidentify` updates the group's current descriptive profile.
+
+Identifying a group later never adds it to older events that arrived without a
+group. Current profile properties are not a historical snapshot. If a plan change
+or another transition matters historically, send it as a business event or include
+the event-time value in that business event's properties.
 
 ## Authentication
 
@@ -68,12 +104,12 @@ Staff-only management routes:
 - `POST /api/v1/projects/{project_id}/ingestion-credentials/{credential_id}/rotate/`
 - `POST /api/v1/projects/{project_id}/ingestion-credentials/{credential_id}/revoke/`
 
-Creation accepts `name`, `require_product`, and `require_account`. Creation and
-rotation return credential metadata plus `secret` once, with `Cache-Control:
+Creation accepts a human-readable `name`. Creation and rotation return credential
+metadata plus `secret` once, with `Cache-Control:
 no-store`. List responses never return a secret or hash. Store the secret securely
 at creation; it cannot be retrieved later.
 
-Rotation creates a new credential with the same name and validation requirements.
+Rotation creates a new credential with the same name.
 The previous credential remains active for a producer rollout; revoke it afterward.
 Revocation is idempotent and permanent through these APIs. There is no reactivation
 endpoint. An active credential is one whose `revoked_at` is null. Credentials are
@@ -132,9 +168,10 @@ Environment-configurable defaults:
 | `INGESTION_MAX_REQUEST_BYTES` | 1048576 | Raw UTF-8 HTTP body bytes |
 | `INGESTION_MAX_PROPERTY_BYTES` | 65536 | Compact UTF-8 encoding of each properties object |
 | `INGESTION_MAX_BATCH_EVENTS` | 500 | Items in one nonempty batch |
+| `INGESTION_MAX_GROUPS` | 5 | Group associations on one event |
 
 The parser reads at most the request limit plus one byte. Property limits are
-per-item; groups are bounded by the request limit. Exceeding a request/batch limit
+per-item; group count is bounded separately. Exceeding a request/batch limit
 returns HTTP 413; oversized properties return 413 for capture or an item rejection
 in bulk. Configure the front proxy's request limit consistently.
 
@@ -145,7 +182,7 @@ and `field` (null for request-wide errors). Responses carry a generated
 Stable codes include `INVALID_CREDENTIAL`, `INVALID_JSON`, `INVALID_BATCH`,
 `INVALID_ENVELOPE`, `UNKNOWN_ENVELOPE_FIELD`,
 `INVALID_EVENT`, `INVALID_DISTINCT_ID`, `INVALID_UUID`, `INVALID_TIMESTAMP`,
-`INVALID_GROUPS`, `INVALID_PROPERTIES`, `REQUIRED_PROPERTY`,
+`INVALID_GROUPS`, `INVALID_GROUP_IDENTIFY`, `INVALID_PROPERTIES`,
 `REQUEST_TOO_LARGE`, `PROPERTIES_TOO_LARGE`, `BATCH_TOO_LARGE`, `UUID_CONFLICT`,
 and `STORAGE_UNAVAILABLE`. Storage failures return HTTP 503 for capture and an
 individual rejection in bulk; retry using the same UUID. Malformed envelope

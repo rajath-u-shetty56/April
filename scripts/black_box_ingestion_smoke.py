@@ -77,13 +77,10 @@ def main():
         timeout = float(os.environ.get("ANALYTICS_TIMEOUT_SECONDS", "10"))
         if not math.isfinite(timeout) or timeout <= 0:
             raise ValueError("ANALYTICS_TIMEOUT_SECONDS must be finite and positive")
-        flag = os.environ.get("ANALYTICS_EXPECT_REQUIRED_CONTEXT", "true").strip().lower()
-        if flag not in ("true", "false"):
-            raise ValueError("ANALYTICS_EXPECT_REQUIRED_CONTEXT must be true or false")
     except ValueError:
         print("Configuration error: check ANALYTICS_BASE_URL (HTTP(S), no embedded "
               "credentials/query/fragment), ANALYTICS_TIMEOUT_SECONDS (positive "
-              "finite number), and ANALYTICS_EXPECT_REQUIRED_CONTEXT (true/false).",
+              "finite number).",
               file=sys.stderr)
         return 2
 
@@ -209,18 +206,14 @@ def main():
           event("helpdesk", "ticket_created", "helpdesk:agent:42"),
           {"code": "INVALID_CREDENTIAL"}, request_key=invalid_key)
 
-    if flag == "true":
-        no_product = event("helpdesk", "ticket_created", "helpdesk:agent:42")
-        del no_product["properties"]["product"]
-        check("8a. Required product context", "/api/v1/capture/", 400, no_product,
-              {"code": "REQUIRED_PROPERTY", "field": "properties.product"})
-        no_account = event("helpdesk", "ticket_created", "helpdesk:agent:42")
-        del no_account["groups"]["account"]
-        check("8b. Required account context", "/api/v1/capture/", 400, no_account,
-              {"code": "REQUIRED_PROPERTY", "field": "groups.account"})
-    else:
-        print("\n8. Required HappyFox context: SKIPPED "
-              "(ANALYTICS_EXPECT_REQUIRED_CONTEXT=false)")
+    no_product = event("helpdesk", "ticket_created", "helpdesk:agent:42")
+    del no_product["properties"]["product"]
+    check("8a. Optional product context", "/api/v1/capture/", 201, no_product,
+          {"status": "accepted", "duplicate": False})
+    no_account = event("helpdesk", "ticket_created", "helpdesk:agent:42")
+    no_account["groups"] = {}
+    check("8b. Optional account context", "/api/v1/capture/", 201, no_account,
+          {"status": "accepted", "duplicate": False})
 
     print(f"\nTotal passed: {passed}")
     print(f"Total failed: {failed}")

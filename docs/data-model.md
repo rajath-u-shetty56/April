@@ -5,6 +5,7 @@ Workspace
 └── Project
     ├── EventDefinition
     ├── IngestionCredential
+    ├── GroupProfile
     └── Event
 ```
 
@@ -53,11 +54,25 @@ B-tree indexes cover `(project, timestamp)`, `(project, event, timestamp)`, and
 `(project, distinct_id, timestamp)`. The `(project, uuid)` constraint supports retry
 lookup. Arbitrary JSON properties have no indexes.
 
+## GroupProfile
+
+A group profile stores current descriptive information for a business entity such
+as an account, organization, or team. Its identity is the unique combination of
+`project`, `group_type`, and `group_key`.
+
+- `properties`: current merged JSON properties, such as name, plan, or region.
+- `last_seen_at`: latest occurrence time of an ingested business event that was
+  explicitly associated with the group.
+
+An ordinary event's `groups` object creates or touches the matching profiles. The
+reserved `$groupidentify` event merges current properties. Both operations happen
+in the same transaction as event storage. A delayed event cannot move
+`last_seen_at` backwards, and identifying a group does not modify older events.
+
 ## IngestionCredential
 
 - UUID `id`, required `project`, and human-readable `name`.
 - Unique indexed `prefix` for lookup; `secret_hash` for constant-time verification.
-- Independent `require_product` and `require_account` validation flags, default false.
 - `created_at`, `updated_at`, nullable `last_used_at`, and nullable `revoked_at`.
 
 `revoked_at = null` means active. Revocation cannot be reversed through the API.
@@ -68,6 +83,6 @@ subsequent event fails validation.
 
 ## Not implemented
 
-No persisted person, account profile, identity mapping, rejected-payload, metric,
-or MCP models are present. Rejection monitoring uses sanitized structured logs and
-log-derived counter samples.
+No persisted person, person identity mapping, group-membership graph, historical
+group-property table, rejected-payload, metric, or MCP models are present.
+Rejection monitoring uses sanitized structured logs and log-derived counter samples.
