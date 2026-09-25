@@ -26,6 +26,7 @@ INSTALLED_APPS = [
     "analytics_platform.catalog",
     "analytics_platform.event_catalog",
     "analytics_platform.events",
+    "analytics_platform.group_analytics",
     "analytics_platform.ingestion",
 ]
 
