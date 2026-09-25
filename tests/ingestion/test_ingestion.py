@@ -439,6 +439,166 @@ def test_project_and_workspace_isolation(staff, project, producer, credential, e
     assert staff.post(url).status_code == 404
 
 
+def test_group_profiles_are_isolated_by_project(staff, project, producer, event):
+    from analytics_platform.catalog.models import Project
+
+    other = Project.objects.create(workspace=project.workspace, key="other", name="Other")
+    response = staff.post(
+        f"/api/v1/projects/{other.pk}/ingestion-credentials/",
+        {"name": "other"},
+        format="json",
+    )
+    other_producer = APIClient()
+    other_producer.credentials(HTTP_AUTHORIZATION=f"Bearer {response.data['secret']}")
+    first = {
+        **event,
+        "event": "$groupidentify",
+        "groups": {},
+        "properties": {
+            "$group_type": "account",
+            "$group_key": "acme",
+            "$group_set": {"plan": "enterprise"},
+        },
+    }
+    second = {
+        **first,
+        "properties": {
+            **first["properties"],
+            "$group_set": {"plan": "trial"},
+        },
+    }
+
+    assert producer.post("/api/v1/capture/", first, format="json").status_code == 201
+    assert other_producer.post("/api/v1/capture/", second, format="json").status_code == 201
+
+    assert project.group_profiles.get().properties == {"plan": "enterprise"}
+    assert other.group_profiles.get().properties == {"plan": "trial"}
+
+
+def test_bulk_group_operations_keep_valid_neighbors(producer, event, project):
+    identify = {
+        **event,
+        "event": "$groupidentify",
+        "groups": {},
+        "properties": {
+            "$group_type": "account",
+            "$group_key": "acme",
+            "$group_set": {"plan": "trial"},
+        },
+    }
+    malformed = {
+        **identify,
+        "uuid": str(uuid4()),
+        "properties": {
+            "$group_type": "company",
+            "$group_key": "must-not-exist",
+        },
+    }
+    grouped = {
+        **event,
+        "uuid": str(uuid4()),
+        "groups": {"team": "support"},
+    }
+
+    response = producer.post(
+        "/api/v1/bulk/",
+        {"events": [identify, malformed, grouped]},
+        format="json",
+    )
+
+    assert response.status_code == 200
+    assert response.data["accepted"] == 2
+    assert response.data["rejected"] == 1
+    assert [result["status"] for result in response.data["results"]] == [
+        "accepted",
+        "rejected",
+        "accepted",
+    ]
+    assert not project.group_profiles.filter(group_type="company").exists()
+    assert set(project.group_profiles.values_list("group_type", "group_key")) == {
+        ("account", "acme"),
+        ("team", "support"),
+    }
+
+
+def test_group_profile_update_rolls_back_when_event_storage_fails(
+    producer, event, project, monkeypatch
+):
+    from django.db import DatabaseError
+
+    from analytics_platform.events.models import Event
+
+    project.group_profiles.create(
+        group_type="account",
+        group_key="acme",
+        properties={"plan": "trial"},
+    )
+    event.update(
+        event="$groupidentify",
+        groups={},
+        properties={
+            "$group_type": "account",
+            "$group_key": "acme",
+            "$group_set": {"plan": "enterprise"},
+        },
+    )
+
+    def fail_save(*args, **kwargs):
+        raise DatabaseError("sensitive database failure")
+
+    monkeypatch.setattr(Event, "save", fail_save)
+
+    response = producer.post("/api/v1/capture/", event, format="json")
+
+    assert response.status_code == 503
+    assert response.data["code"] == "STORAGE_UNAVAILABLE"
+    assert events().count() == 0
+    profile = project.group_profiles.get(group_type="account", group_key="acme")
+    assert profile.properties == {"plan": "trial"}
+
+
+def test_concurrent_groupidentify_events_merge_properties(project, event):
+    from concurrent.futures import ThreadPoolExecutor
+
+    from django.db import close_old_connections, connection, connections
+
+    from analytics_platform.ingestion.credentials import create_credential
+    from analytics_platform.ingestion.service import ingest_event
+
+    assert connection.vendor == "postgresql", "Concurrency tests require PostgreSQL"
+    credential, _ = create_credential(project, name="test")
+
+    def submit(property_name, property_value):
+        close_old_connections()
+        payload = {
+            **event,
+            "uuid": str(uuid4()),
+            "event": "$groupidentify",
+            "groups": {},
+            "properties": {
+                "$group_type": "account",
+                "$group_key": "acme",
+                "$group_set": {property_name: property_value},
+            },
+        }
+        try:
+            return ingest_event(credential, payload, request_id=str(uuid4()))
+        finally:
+            connections.close_all()
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(submit, "plan", "enterprise")
+        second = pool.submit(submit, "region", "india")
+        responses = [first.result(timeout=15), second.result(timeout=15)]
+
+    assert [status for _, status in responses] == [201, 201]
+    assert project.group_profiles.get().properties == {
+        "plan": "enterprise",
+        "region": "india",
+    }
+    assert events().filter(event="$groupidentify").count() == 2
+
+
 def test_wrong_secret_with_real_prefix(producer, credential, event):
     producer.credentials(HTTP_AUTHORIZATION=f"Bearer {credential['prefix']}.wrong-secret")
     assert producer.post("/api/v1/capture/", event, format="json").status_code == 401
