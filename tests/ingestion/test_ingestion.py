@@ -256,6 +256,51 @@ def test_product_classification_must_be_a_valid_key(producer, event, product):
     assert events().count() == 0
 
 
+def test_group_count_is_bounded(producer, event, settings):
+    settings.INGESTION_MAX_GROUPS = 1
+    event["groups"] = {"account": "acme", "team": "support"}
+
+    response = producer.post("/api/v1/capture/", event, format="json")
+
+    assert response.status_code == 400
+    assert response.data["code"] == "INVALID_GROUPS"
+    assert response.data["field"] == "groups"
+    assert events().count() == 0
+
+
+@pytest.mark.parametrize(
+    ("properties", "field"),
+    [
+        ({"$group_type": "account"}, "properties.$group_key"),
+        (
+            {"$group_type": "account", "$group_key": "acme"},
+            "properties.$group_set",
+        ),
+        (
+            {"$group_type": "", "$group_key": "acme", "$group_set": {}},
+            "properties.$group_type",
+        ),
+        (
+            {"$group_type": "account", "$group_key": 12, "$group_set": {}},
+            "properties.$group_key",
+        ),
+        (
+            {"$group_type": "account", "$group_key": "acme", "$group_set": []},
+            "properties.$group_set",
+        ),
+    ],
+)
+def test_groupidentify_requires_valid_group_metadata(producer, event, properties, field):
+    event.update(event="$groupidentify", groups={}, properties=properties)
+
+    response = producer.post("/api/v1/capture/", event, format="json")
+
+    assert response.status_code == 400
+    assert response.data["code"] == "INVALID_GROUP_IDENTIFY"
+    assert response.data["field"] == field
+    assert events().count() == 0
+
+
 def test_limits(producer, event, settings):
     settings.INGESTION_MAX_BATCH_EVENTS = 1
     response = producer.post("/api/v1/bulk/", {"events": [event, event]}, format="json")

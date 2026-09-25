@@ -5,7 +5,10 @@ from django.conf import settings
 from rest_framework import serializers
 
 from analytics_platform.event_catalog.models import PRODUCT_KEY_MAX_LENGTH
+from analytics_platform.group_analytics.models import GROUP_KEY_MAX_LENGTH, GROUP_TYPE_MAX_LENGTH
 from analytics_platform.ingestion.errors import IngestionError
+
+GROUP_IDENTIFY_EVENT = "$groupidentify"
 
 
 class StrictStringField(serializers.CharField):
@@ -57,6 +60,46 @@ def json_bytes(value):
     return encoded.encode("utf-8")
 
 
+def _is_valid_group_string(value, max_length):
+    return (
+        isinstance(value, str)
+        and bool(value)
+        and value == value.strip()
+        and len(value) <= max_length
+    )
+
+
+def validate_group_mapping(value):
+    if not isinstance(value, dict) or len(value) > settings.INGESTION_MAX_GROUPS:
+        raise IngestionError("INVALID_GROUPS", "groups")
+    for group_type, group_key in value.items():
+        if not _is_valid_group_string(group_type, GROUP_TYPE_MAX_LENGTH):
+            raise IngestionError("INVALID_GROUPS", "groups")
+        if not _is_valid_group_string(group_key, GROUP_KEY_MAX_LENGTH):
+            raise IngestionError("INVALID_GROUPS", "groups")
+    return value
+
+
+def group_identify_values(validated_event):
+    if validated_event["event"] != GROUP_IDENTIFY_EVENT:
+        return None
+
+    properties = validated_event["properties"]
+    group_type = properties.get("$group_type")
+    if not _is_valid_group_string(group_type, GROUP_TYPE_MAX_LENGTH):
+        raise IngestionError("INVALID_GROUP_IDENTIFY", "properties.$group_type")
+
+    group_key = properties.get("$group_key")
+    if not _is_valid_group_string(group_key, GROUP_KEY_MAX_LENGTH):
+        raise IngestionError("INVALID_GROUP_IDENTIFY", "properties.$group_key")
+
+    group_properties = properties.get("$group_set")
+    if not isinstance(group_properties, dict):
+        raise IngestionError("INVALID_GROUP_IDENTIFY", "properties.$group_set")
+
+    return group_type, group_key, group_properties
+
+
 def validate_event(payload):
     if not isinstance(payload, dict):
         raise IngestionError("INVALID_ENVELOPE")
@@ -67,6 +110,7 @@ def validate_event(payload):
         field = next(iter(serializer.errors))
         raise IngestionError("INVALID_" + field.upper(), field)
     value = serializer.validated_data
+    validate_group_mapping(value["groups"])
     for field in ("event", "distinct_id", "groups", "properties"):
         try:
             size = len(json_bytes(value[field]))
@@ -83,4 +127,5 @@ def validate_event(payload):
             or len(product_key) > PRODUCT_KEY_MAX_LENGTH
         ):
             raise IngestionError("INVALID_PROPERTIES", "properties.product")
+    group_identify_values(value)
     return value

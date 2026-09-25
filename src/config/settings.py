@@ -83,6 +83,7 @@ REST_FRAMEWORK = {
 INGESTION_MAX_REQUEST_BYTES = int(os.environ.get("INGESTION_MAX_REQUEST_BYTES", 1048576))
 INGESTION_MAX_PROPERTY_BYTES = int(os.environ.get("INGESTION_MAX_PROPERTY_BYTES", 65536))
 INGESTION_MAX_BATCH_EVENTS = int(os.environ.get("INGESTION_MAX_BATCH_EVENTS", 500))
+INGESTION_MAX_GROUPS = int(os.environ.get("INGESTION_MAX_GROUPS", 5))
 
 # Rejection records are already JSON and contain a log-derived counter sample.
 LOGGING = {
