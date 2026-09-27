@@ -96,6 +96,8 @@ def test_staff_can_create_event_definition(api_client, staff_user, project):
     assert response.data["product_key"] == "contact_center"
     assert response.data["name"] == "call_completed"
     assert response.data["status"] == "verified"
+    assert response.data["created_at"] is not None
+    assert response.data["last_seen_at"] is None
     assert "json_schema" not in response.data
     assert "version" not in response.data
 
@@ -192,3 +194,50 @@ def test_same_event_name_can_be_created_for_another_product(api_client, staff_us
 
     assert response.status_code == 201
     assert response.data["product_key"] == "bi"
+
+
+@pytest.mark.django_db
+def test_staff_can_update_event_definition_metadata(api_client, staff_user, project):
+    api_client.force_authenticate(staff_user)
+    definition = EventDefinition.objects.create(
+        project=project,
+        product_key="helpdesk",
+        name="ticket_created",
+    )
+
+    response = api_client.patch(
+        f"/api/v1/projects/{project.id}/event-definitions/{definition.id}/",
+        {
+            "description": "Created after a ticket is committed",
+            "owner": "helpdesk-platform",
+            "status": "verified",
+        },
+        format="json",
+    )
+
+    assert response.status_code == 200
+    definition.refresh_from_db()
+    assert definition.description == "Created after a ticket is committed"
+    assert definition.owner == "helpdesk-platform"
+    assert definition.status == "verified"
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("field", ["name", "product_key", "project_id", "last_seen_at"])
+def test_metadata_update_rejects_identity_and_observation_fields(
+    api_client, staff_user, project, field
+):
+    api_client.force_authenticate(staff_user)
+    definition = EventDefinition.objects.create(
+        project=project,
+        product_key="helpdesk",
+        name="ticket_created",
+    )
+
+    response = api_client.patch(
+        f"/api/v1/projects/{project.id}/event-definitions/{definition.id}/",
+        {field: "replacement"},
+        format="json",
+    )
+
+    assert response.status_code == 400

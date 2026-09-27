@@ -224,6 +224,30 @@ def test_existing_definition_metadata_preserved(producer, project, event):
         "team",
         "keep",
     )
+    assert definition.last_seen_at.isoformat() == "2026-09-17T10:30:00+00:00"
+
+
+def test_event_definition_last_seen_tracks_latest_occurrence(producer, project, event):
+    assert producer.post("/api/v1/capture/", event, format="json").status_code == 201
+    definition = project.event_definitions.get()
+    assert definition.last_seen_at.isoformat() == "2026-09-17T10:30:00+00:00"
+
+    later = {
+        **event,
+        "uuid": str(uuid4()),
+        "timestamp": "2026-09-20T10:30:00Z",
+    }
+    assert producer.post("/api/v1/capture/", later, format="json").status_code == 201
+
+    delayed = {
+        **event,
+        "uuid": str(uuid4()),
+        "timestamp": "2026-09-10T10:30:00Z",
+    }
+    assert producer.post("/api/v1/capture/", delayed, format="json").status_code == 201
+
+    definition.refresh_from_db()
+    assert definition.last_seen_at.isoformat() == "2026-09-20T10:30:00+00:00"
 
 
 def test_same_event_name_discovers_separate_product_definitions(producer, event, project):

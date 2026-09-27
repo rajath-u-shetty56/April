@@ -45,7 +45,7 @@ The staff-only management API is mounted under `/api/v1/`:
 - `GET/POST /api/v1/workspaces/`
 - `GET/POST /api/v1/workspaces/{workspace_id}/projects/`
 - `GET/POST /api/v1/projects/{project_id}/event-definitions/`
-- `GET /api/v1/projects/{project_id}/event-definitions/{definition_id}/`
+- `GET/PATCH /api/v1/projects/{project_id}/event-definitions/{definition_id}/`
 
 - `GET/POST /api/v1/projects/{project_id}/ingestion-credentials/`
 - `POST /api/v1/projects/{project_id}/ingestion-credentials/{credential_id}/rotate/`

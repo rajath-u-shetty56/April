@@ -22,6 +22,7 @@ class EventDefinition(UUIDTimeStampedModel):
     name = models.CharField(max_length=200)
     description = models.TextField(blank=True)
     owner = models.CharField(max_length=160, blank=True)
+    last_seen_at = models.DateTimeField(null=True, blank=True)
     status = models.CharField(
         max_length=16,
         choices=EventDefinitionStatus.choices,

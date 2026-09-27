@@ -6,7 +6,10 @@ from rest_framework.views import APIView
 
 from analytics_platform.catalog.models import Project
 from analytics_platform.event_catalog.models import EventDefinition
-from analytics_platform.event_catalog.serializers import EventDefinitionSerializer
+from analytics_platform.event_catalog.serializers import (
+    EventDefinitionMetadataSerializer,
+    EventDefinitionSerializer,
+)
 
 
 class StaffAPIView(APIView):
@@ -43,4 +46,19 @@ class ProjectEventDefinitionDetailView(StaffAPIView):
             project_id=project_id,
             pk=definition_id,
         )
+        return Response(EventDefinitionSerializer(definition).data)
+
+    def patch(self, request, project_id, definition_id):
+        definition = get_object_or_404(
+            EventDefinition,
+            project_id=project_id,
+            pk=definition_id,
+        )
+        serializer = EventDefinitionMetadataSerializer(
+            definition,
+            data=request.data,
+            partial=True,
+        )
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
         return Response(EventDefinitionSerializer(definition).data)

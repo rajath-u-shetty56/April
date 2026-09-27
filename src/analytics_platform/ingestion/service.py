@@ -5,7 +5,7 @@ from django.conf import settings
 from django.db import DatabaseError, transaction
 from django.utils import timezone
 
-from analytics_platform.event_catalog.models import EventDefinition
+from analytics_platform.event_catalog.services import touch_event_definition
 from analytics_platform.events.models import Event
 from analytics_platform.group_analytics.services import identify_group, touch_event_groups
 from analytics_platform.ingestion.contracts import (
@@ -86,10 +86,11 @@ def persist_event(credential, value, received_at):
                 groups=value["groups"],
                 occurred_at=value.get("timestamp", received_at),
             )
-            EventDefinition.objects.get_or_create(
+            touch_event_definition(
                 project=credential.project,
                 product_key=value["properties"].get("product", ""),
                 name=value["event"],
+                occurred_at=value.get("timestamp", received_at),
             )
         stored, created = Event.objects.get_or_create(
             project=credential.project,

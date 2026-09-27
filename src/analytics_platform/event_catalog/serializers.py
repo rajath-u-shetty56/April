@@ -16,7 +16,10 @@ class EventDefinitionSerializer(serializers.ModelSerializer):
             "description",
             "owner",
             "status",
+            "created_at",
+            "last_seen_at",
         )
+        read_only_fields = ("created_at", "last_seen_at")
 
     def validate(self, attrs):
         project = self.context.get("project")
@@ -31,3 +34,20 @@ class EventDefinitionSerializer(serializers.ModelSerializer):
                 {"name": "This event already exists for the product in the project."}
             )
         return attrs
+
+
+class EventDefinitionMetadataSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = EventDefinition
+        fields = ("description", "owner", "status")
+
+    def to_internal_value(self, data):
+        unknown_fields = set(data) - set(self.fields)
+        if unknown_fields:
+            raise serializers.ValidationError(
+                {
+                    field: "This field cannot be changed through the metadata endpoint."
+                    for field in sorted(unknown_fields)
+                }
+            )
+        return super().to_internal_value(data)

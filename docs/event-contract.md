@@ -133,8 +133,9 @@ Omitting timestamp on a retry preserves the stored timestamp. Reusing a UUID wit
 conflicting content returns HTTP 409, `UUID_CONFLICT`, and field `uuid`.
 
 Acceptance means the database transaction has successfully committed, including
-new event-definition discovery. It does not imply a queue handoff. Received time
-is distinct from producer occurrence time and is unchanged on retry.
+new event-definition discovery and its latest-seen timestamp. It does not imply a
+queue handoff. Received time is distinct from producer occurrence time and is
+unchanged on retry.
 
 ## Bulk ingestion
 

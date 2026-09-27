@@ -24,15 +24,20 @@ separate databases. Neither products nor environments are database models.
 Documentation and discovery metadata for a product's event name. Fields are
 `project`, optional `product_key`, `name`, `description`, `owner`, and status
 (`visible`, `verified`, or `hidden`), plus UUID primary key and created/updated
-timestamps. The combination of `project`, `product_key`, and `name` is unique, so
+timestamps. `last_seen_at` records the latest occurrence time observed for that
+event without moving backwards when delayed data arrives. The combination of
+`project`, `product_key`, and `name` is unique, so
 two products can document the same event name independently. An empty product key
 represents a project-wide event whose producer supplied no product classification.
 
 Successful ingestion copies `properties.product` into `product_key` and discovers
 missing definitions automatically with status `visible`. Existing metadata is
-preserved. Definitions contain neither occurrences nor strict property schemas;
-events store their event name directly and do not depend on a foreign key to
-mutable catalog metadata.
+preserved. Staff can edit description, owner, and status without changing the
+event identity. `hidden` removes an event from normal future discovery; it does
+not reject later occurrences. `verified` marks reviewed definitions that future
+analytics and MCP discovery can prefer. Definitions contain neither occurrences
+nor strict property schemas; events store their event name directly and do not
+depend on a foreign key to mutable catalog metadata.
 
 ## Event
 

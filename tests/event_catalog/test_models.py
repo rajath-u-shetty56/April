@@ -74,4 +74,5 @@ def test_event_definition_is_visible_by_default(project):
     )
 
     assert definition.status == EventDefinitionStatus.VISIBLE
+    assert definition.last_seen_at is None
     assert str(definition) == f"{project}:contact_center/call_completed"

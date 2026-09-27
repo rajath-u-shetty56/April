@@ -75,7 +75,9 @@ key, and event name is unique in `EventDefinition`. The product key is copied fr
 product. This keeps identically named events from different products separate in
 the catalog. Concurrent requests can still discover the same product event without
 creating duplicate definitions. Ingestion never overwrites an existing
-definition's status, owner, or description.
+definition's status, owner, or description. It only advances `last_seen_at` when
+the newly accepted event has a later occurrence timestamp. A retry does not
+change the definition.
 
 Storage errors during event processing roll back that event and return a
 sanitized error. Database error details and event data are not returned to the
