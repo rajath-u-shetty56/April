@@ -66,8 +66,9 @@ The analysis uses the 30 days before the fixed dataset cutoff for active cross-p
 feature adoption, feature depth, and distinct feature users. Contact Center feature metrics use an
 explicit qualifying-event mapping rather than treating call lifecycle events as features. Plan
 adoption reports an eligible-account denominator and attributes each qualifying event to the plan
-effective at its timestamp. Synthetic user identifiers are scoped by product and account; they are
-not cross-product identities.
+effective at its timestamp. Synthetic user identifiers are scoped by user store and account.
+Helpdesk, Contact Center, and Rise share the Helpdesk user namespace, while BI keeps its separate
+user namespace because no verified cross-product user mapping exists.
 
 ## API
 

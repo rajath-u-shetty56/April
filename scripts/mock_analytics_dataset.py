@@ -19,6 +19,12 @@ DATASET_NAMESPACE = uuid.UUID("f95bbc7d-50a8-49a8-9fc1-f63e97889919")
 DATASET_START = datetime(2026, 7, 6, tzinfo=UTC)
 ANALYSIS_CUTOFF = datetime(2026, 9, 14, tzinfo=UTC)
 BATCH_SIZE = 250
+USER_STORE_BY_PRODUCT = {
+    "helpdesk": "helpdesk",
+    "contact_center": "helpdesk",
+    "rise": "helpdesk",
+    "bi": "bi",
+}
 
 
 class NoRedirects(urllib.request.HTTPRedirectHandler):
@@ -68,10 +74,11 @@ def _behavior(
     identity: str,
     **properties,
 ) -> dict:
+    user_store = USER_STORE_BY_PRODUCT[product]
     return {
         "uuid": _event_uuid("behavior", account, product, name, week, identity),
         "event": name,
-        "distinct_id": f"{product}:{account}:user:{actor}",
+        "distinct_id": f"{user_store}:{account}:user:{actor}",
         "timestamp": _timestamp(week, sequence),
         "groups": {"account": account},
         "properties": {

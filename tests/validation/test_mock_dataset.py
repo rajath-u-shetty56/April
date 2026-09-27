@@ -21,6 +21,13 @@ def test_dataset_is_deterministic_and_covers_ten_weeks():
 def test_behavioral_events_follow_product_and_account_identity_conventions():
     dataset = build_dataset()
 
+    expected_user_store = {
+        "helpdesk": "helpdesk",
+        "contact_center": "helpdesk",
+        "rise": "helpdesk",
+        "bi": "bi",
+    }
+
     assert {event["groups"]["account"] for event in dataset.behavioral_events} == {
         "acme",
         "bravo",
@@ -36,9 +43,32 @@ def test_behavioral_events_follow_product_and_account_identity_conventions():
     for event in dataset.behavioral_events:
         product = event["properties"]["product"]
         account = event["groups"]["account"]
-        assert event["distinct_id"].startswith(f"{product}:{account}:")
+        assert event["distinct_id"].startswith(
+            f"{expected_user_store[product]}:{account}:user:"
+        )
         assert event["timestamp"].endswith("Z")
         assert event["uuid"]
+
+
+def test_products_using_the_helpdesk_user_store_share_user_identity():
+    events = build_dataset().behavioral_events
+
+    acme_helpdesk_user = next(
+        event
+        for event in events
+        if event["groups"]["account"] == "acme"
+        and event["properties"]["product"] == "helpdesk"
+        and event["distinct_id"].endswith(":user:1")
+    )
+    acme_contact_center_user = next(
+        event
+        for event in events
+        if event["groups"]["account"] == "acme"
+        and event["properties"]["product"] == "contact_center"
+        and event["distinct_id"].endswith(":user:1")
+    )
+
+    assert acme_helpdesk_user["distinct_id"] == acme_contact_center_user["distinct_id"]
 
 
 def test_hotel_one_time_feature_uses_the_same_call_identity_as_its_call():
