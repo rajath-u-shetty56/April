@@ -6,6 +6,7 @@ dependencies = [
   "Django>=5.2,<5.3",
   "djangorestframework>=3.18,<3.19",
   "dj-database-url>=2.3,<4",
+  "mcp>=2,<3",
   "psycopg[binary]>=3.2,<4",
   "python-dotenv>=1.1,<2",
 ]
