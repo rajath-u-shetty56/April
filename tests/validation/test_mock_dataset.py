@@ -35,9 +35,20 @@ def test_behavioral_events_follow_product_and_account_identity_conventions():
     }
     for event in dataset.behavioral_events:
         product = event["properties"]["product"]
-        assert event["distinct_id"].startswith(product + ":")
+        account = event["groups"]["account"]
+        assert event["distinct_id"].startswith(f"{product}:{account}:")
         assert event["timestamp"].endswith("Z")
         assert event["uuid"]
+
+
+def test_hotel_one_time_feature_uses_the_same_call_identity_as_its_call():
+    hotel = [
+        event
+        for event in build_dataset().behavioral_events
+        if event["groups"]["account"] == "hotel"
+    ]
+
+    assert {event["properties"]["call_id"] for event in hotel} == {"hotel-w3-c1"}
 
 
 def test_profile_events_cover_entitlement_and_trial_transitions():

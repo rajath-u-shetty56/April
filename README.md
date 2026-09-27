@@ -62,6 +62,13 @@ questions, and exits nonzero when an expected scenario is missing. Historical pl
 results are explicitly conditional on complete, correctly timestamped `$groupidentify` history;
 `GroupProfile` remains the source for current account state.
 
+The analysis uses the 30 days before the fixed dataset cutoff for active cross-product usage,
+feature adoption, feature depth, and distinct feature users. Contact Center feature metrics use an
+explicit qualifying-event mapping rather than treating call lifecycle events as features. Plan
+adoption reports an eligible-account denominator and attributes each qualifying event to the plan
+effective at its timestamp. Synthetic user identifiers are scoped by product and account; they are
+not cross-product identities.
+
 ## API
 
 The staff-only management API is mounted under `/api/v1/`:

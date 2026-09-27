@@ -15,7 +15,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
-DATASET_NAMESPACE = uuid.UUID("77c5ad40-bc5d-4e90-9ffc-912736605b16")
+DATASET_NAMESPACE = uuid.UUID("f95bbc7d-50a8-49a8-9fc1-f63e97889919")
 DATASET_START = datetime(2026, 7, 6, tzinfo=UTC)
 ANALYSIS_CUTOFF = datetime(2026, 9, 14, tzinfo=UTC)
 BATCH_SIZE = 250
@@ -71,7 +71,7 @@ def _behavior(
     return {
         "uuid": _event_uuid("behavior", account, product, name, week, identity),
         "event": name,
-        "distinct_id": f"{product}:user:{actor}",
+        "distinct_id": f"{product}:{account}:user:{actor}",
         "timestamp": _timestamp(week, sequence),
         "groups": {"account": account},
         "properties": {
@@ -385,6 +385,20 @@ def build_dataset() -> SyntheticDataset:
         if week < 4:
             _append_contact_center_week(events, "foxtrot", week, 5)
 
+    for account in ("bravo", "golf", "juliet"):
+        events.append(
+            _behavior(
+                account,
+                "contact_center",
+                "listen_started",
+                8,
+                18,
+                30,
+                f"{account}-w9-one-time-listen",
+                call_id=f"{account}-w9-c1",
+            )
+        )
+
     _append_call(events, "hotel", 2, 0)
     events.append(
         _behavior(
@@ -395,7 +409,7 @@ def build_dataset() -> SyntheticDataset:
             15,
             2,
             "hotel-once-whisper",
-            call_id="hotel-w1-c1",
+            call_id="hotel-w3-c1",
         )
     )
     events.sort(key=lambda event: (event["timestamp"], event["uuid"]))

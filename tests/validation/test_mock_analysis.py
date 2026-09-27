@@ -1,7 +1,8 @@
 import subprocess
 import sys
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 from uuid import UUID
 
 import pytest
@@ -9,7 +10,7 @@ import pytest
 from analytics_platform.event_catalog.models import EventDefinition
 from analytics_platform.events.models import Event
 from analytics_platform.group_analytics.models import GroupProfile
-from scripts.mock_analytics_analysis import analyze_project, assert_expected_results
+from scripts.mock_analytics_analysis import _funnel, analyze_project, assert_expected_results
 from scripts.mock_analytics_dataset import ANALYSIS_CUTOFF, build_dataset
 
 pytestmark = pytest.mark.django_db
@@ -124,7 +125,25 @@ def test_analysis_answers_core_account_product_and_trial_questions(project):
     assert result["trials"]["used_before_conversion"] == ["echo"]
     assert result["trials"]["used_then_expired"] == ["foxtrot"]
     assert "golf" in result["weekly_decline"]["declining_accounts"]
-    assert result["abandonment"]["whisper_started"]["stopped_accounts"] == ["hotel"]
+    assert result["abandonment"]["supervisor_whisper"]["stopped_accounts"] == ["hotel"]
+    assert "call_initiated" not in result["feature_adoption"]
+    assert "call_transfer" in result["feature_adoption"]
+    assert "ai_summary" in result["feature_adoption"]
+    assert "supervisor_listen" in result["high_adoption_low_depth"]
+    pro_listen = result["adoption_by_plan_at_event_time"]["plans"]["pro"]["features"][
+        "supervisor_listen"
+    ]
+    assert result["adoption_by_plan_at_event_time"]["plans"]["pro"][
+        "eligible_account_count"
+    ] == 4
+    assert pro_listen == {
+        "adopting_account_count": 3,
+        "adopting_accounts": ["acme", "golf", "juliet"],
+        "rate": 75.0,
+    }
+    assert result["adoption_by_plan_at_event_time"]["plans"]["enterprise"][
+        "features"
+    ]["supervisor_listen"]["rate"] == 50.0
 
 
 def test_analysis_matches_expected_synthetic_outcomes(project):
@@ -159,3 +178,58 @@ def test_funnels_match_events_by_call_id_not_only_aggregate_counts(project):
         "call_transfer_initiated_to_call_transfer_completed"
     ]["lost"] > 0
     assert result["funnels"]["callback_requested_to_callback_fulfilled"]["lost"] > 0
+
+
+def test_funnel_requires_a_later_completion_and_preserves_repeated_attempts():
+    def event(name, minute):
+        return SimpleNamespace(
+            event=name,
+            timestamp=datetime(2026, 9, 1, 10, minute, tzinfo=UTC),
+            groups={"account": "acme"},
+            properties={"call_id": "call-1"},
+        )
+
+    result = _funnel(
+        [
+            event("call_transfer_completed", 1),
+            event("call_transfer_initiated", 2),
+            event("call_transfer_initiated", 3),
+            event("call_transfer_completed", 4),
+        ],
+        "call_transfer_initiated",
+        "call_transfer_completed",
+    )
+
+    assert result["started"] == 2
+    assert result["completed"] == 1
+    assert result["lost"] == 1
+
+
+def test_active_cross_product_usage_ignores_products_seen_only_before_period(project):
+    _store_dataset(project)
+    Event.objects.create(
+        project=project,
+        uuid=UUID("00000000-0000-0000-0000-000000000099"),
+        event="dashboard_viewed",
+        distinct_id="bi:juliet:user:1",
+        timestamp=ANALYSIS_CUTOFF - timedelta(days=40),
+        groups={"account": "juliet"},
+        properties={"product": "bi", "dashboard_id": "old-dashboard"},
+    )
+
+    result = analyze_project(project, cutoff=ANALYSIS_CUTOFF)
+
+    assert result["cross_product"]["period_days"] == 30
+    assert result["cross_product"]["helpdesk_contact_center_and_bi"] == ["acme"]
+
+
+def test_distinct_users_are_grouped_by_account_product_and_feature(project):
+    _store_dataset(project)
+
+    result = analyze_project(project, cutoff=ANALYSIS_CUTOFF)
+    acme = result["distinct_users_by_account_product_feature"]["accounts"]["acme"]
+
+    assert result["distinct_users_by_account_product_feature"]["period_days"] == 30
+    assert acme["contact_center"]["call_transfer"] == 4
+    assert acme["contact_center"]["supervisor_listen"] == 2
+    assert acme["helpdesk"]["helpdesk_macro"] == 2

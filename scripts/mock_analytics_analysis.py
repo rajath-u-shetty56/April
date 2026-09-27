@@ -19,6 +19,28 @@ if __package__:
 else:
     from mock_analytics_dataset import ANALYSIS_CUTOFF
 
+QUALIFYING_FEATURE_EVENTS = {
+    "call_transfer_completed": "call_transfer",
+    "callback_fulfilled": "callback",
+    "call_hold_ended": "call_hold",
+    "listen_started": "supervisor_listen",
+    "whisper_started": "supervisor_whisper",
+    "barge_started": "supervisor_barge",
+    "macro_applied": "helpdesk_macro",
+    "sla_policy_created": "sla_policy",
+    "course_completed": "course_completion",
+    "report_created": "report_creation",
+    "report_viewed": "report_viewing",
+    "dashboard_created": "dashboard_creation",
+    "dashboard_viewed": "dashboard_viewing",
+}
+
+
+def _feature_name(event) -> str | None:
+    if event.event == "call_summary_generated":
+        return "ai_summary" if event.properties.get("success") is True else None
+    return QUALIFYING_FEATURE_EVENTS.get(event.event)
+
 
 def _round_rate(numerator: int, denominator: int) -> float:
     return round(numerator * 100 / denominator, 2) if denominator else 0.0
@@ -41,34 +63,54 @@ def _feature_usage(events, start: datetime, end: datetime):
     for event in events:
         if not (start <= event.timestamp < end):
             continue
+        feature = _feature_name(event)
+        if feature is None:
+            continue
         account = _account(event)
         if account is None:
             continue
-        feature_accounts[event.event].add(account)
-        feature_counts[event.event] += 1
-        account_feature_counts[(account, event.event)] += 1
+        feature_accounts[feature].add(account)
+        feature_counts[feature] += 1
+        account_feature_counts[(account, feature)] += 1
     return feature_accounts, feature_counts, account_feature_counts
 
 
 def _funnel(events, first: str, second: str) -> dict:
-    starts = {
-        (_account(event), event.properties.get("call_id"))
-        for event in events
-        if event.event == first and event.properties.get("call_id")
-    }
-    completions = {
-        (_account(event), event.properties.get("call_id"))
-        for event in events
-        if event.event == second and event.properties.get("call_id")
-    }
-    completed = starts & completions
+    starts = defaultdict(list)
+    completions = defaultdict(list)
+    for event in events:
+        call_id = event.properties.get("call_id")
+        if not call_id:
+            continue
+        key = (_account(event), call_id)
+        if event.event == first:
+            starts[key].append(event.timestamp)
+        elif event.event == second:
+            completions[key].append(event.timestamp)
+
+    started_count = sum(len(timestamps) for timestamps in starts.values())
+    completed_count = 0
+    completed_accounts = set()
+    for key, start_times in starts.items():
+        completion_times = sorted(completions.get(key, ()))
+        completion_index = 0
+        for started_at in sorted(start_times):
+            while (
+                completion_index < len(completion_times)
+                and completion_times[completion_index] <= started_at
+            ):
+                completion_index += 1
+            if completion_index < len(completion_times):
+                completed_count += 1
+                completed_accounts.add(key[0])
+                completion_index += 1
     return {
-        "started": len(starts),
-        "completed": len(completed),
-        "lost": len(starts - completions),
-        "completion_rate": _round_rate(len(completed), len(starts)),
+        "started": started_count,
+        "completed": completed_count,
+        "lost": started_count - completed_count,
+        "completion_rate": _round_rate(completed_count, started_count),
         "accounts_started": len({account for account, _ in starts}),
-        "accounts_completed": len({account for account, _ in completed}),
+        "accounts_completed": len(completed_accounts),
     }
 
 
@@ -110,6 +152,7 @@ def analyze_project(project, *, cutoff: datetime = ANALYSIS_CUTOFF) -> dict:
         GroupProfile.objects.filter(project=project, group_type="account").order_by("group_key")
     )
     profile_properties = {profile.group_key: profile.properties for profile in profiles}
+    timelines = _profile_timelines(group_events)
 
     entitled = {
         account
@@ -135,23 +178,62 @@ def analyze_project(project, *, cutoff: datetime = ANALYSIS_CUTOFF) -> dict:
             "median_events_per_adopting_account": float(statistics.median(depths)),
         }
 
-    plan_adoption = defaultdict(lambda: defaultdict(set))
-    for feature, accounts in current_accounts.items():
-        for account in accounts:
-            plan = profile_properties.get(account, {}).get("contact_center_plan")
-            plan_adoption[str(plan)][feature].add(account)
-    adoption_by_current_plan = {
-        plan: {feature: len(accounts) for feature, accounts in sorted(features.items())}
-        for plan, features in sorted(plan_adoption.items())
-    }
+    eligible_plan_accounts = defaultdict(set)
+    for account, timeline in timelines.items():
+        period_states = [_state_at(timeline, current_start)]
+        period_states.extend(
+            state for changed_at, state in timeline if current_start <= changed_at < cutoff
+        )
+        for state in period_states:
+            plan = state.get("contact_center_plan")
+            if state.get("contact_center_status") in {"active", "trial"} and plan:
+                eligible_plan_accounts[str(plan)].add(account)
+
+    plan_feature_accounts = defaultdict(lambda: defaultdict(set))
+    for event in contact_center:
+        if not (current_start <= event.timestamp < cutoff):
+            continue
+        feature = _feature_name(event)
+        if feature is None:
+            continue
+        account = _account(event)
+        state = _state_at(timelines.get(account, []), event.timestamp)
+        plan = state.get("contact_center_plan")
+        if state.get("contact_center_status") in {"active", "trial"} and plan:
+            plan_feature_accounts[str(plan)][feature].add(account)
+
+    plan_adoption = {}
+    for plan, eligible_accounts in sorted(eligible_plan_accounts.items()):
+        plan_adoption[plan] = {
+            "eligible_account_count": len(eligible_accounts),
+            "eligible_accounts": sorted(eligible_accounts),
+            "features": {
+                feature: {
+                    "adopting_account_count": len(
+                        plan_feature_accounts[plan].get(feature, set())
+                    ),
+                    "adopting_accounts": sorted(
+                        plan_feature_accounts[plan].get(feature, set())
+                    ),
+                    "rate": _round_rate(
+                        len(plan_feature_accounts[plan].get(feature, set())),
+                        len(eligible_accounts),
+                    ),
+                }
+                for feature in sorted(current_accounts)
+            },
+        }
 
     previous_four_start = cutoff - timedelta(days=35)
     weekly_feature_accounts = defaultdict(lambda: defaultdict(set))
     for event in contact_center:
         if not (previous_four_start <= event.timestamp < cutoff):
             continue
+        feature = _feature_name(event)
+        if feature is None:
+            continue
         week_index = int((event.timestamp - previous_four_start).days // 7)
-        weekly_feature_accounts[event.event][week_index].add(_account(event))
+        weekly_feature_accounts[feature][week_index].add(_account(event))
     stickiness = {}
     for feature, weeks in sorted(weekly_feature_accounts.items()):
         current = weeks[4]
@@ -180,18 +262,24 @@ def analyze_project(project, *, cutoff: datetime = ANALYSIS_CUTOFF) -> dict:
     products_by_account = defaultdict(set)
     distinct_users = defaultdict(set)
     for event in behavior:
+        if not (current_start <= event.timestamp < cutoff):
+            continue
         account = _account(event)
         product = _product(event)
         if account and product:
             products_by_account[account].add(product)
-            distinct_users[(account, product)].add(event.distinct_id)
+            feature = _feature_name(event)
+            if feature is not None:
+                distinct_users[(account, product, feature)].add(event.distinct_id)
 
-    timelines = _profile_timelines(group_events)
     historical_plan_usage = defaultdict(Counter)
     for event in contact_center:
+        feature = _feature_name(event)
+        if feature is None:
+            continue
         account = _account(event)
         state = _state_at(timelines.get(account, []), event.timestamp)
-        historical_plan_usage[str(state.get("contact_center_plan"))][event.event] += 1
+        historical_plan_usage[str(state.get("contact_center_plan"))][feature] += 1
 
     used_before_conversion = []
     used_then_expired = []
@@ -281,7 +369,11 @@ def analyze_project(project, *, cutoff: datetime = ANALYSIS_CUTOFF) -> dict:
             "event_definitions_by_product": dict(sorted(definition_counts.items())),
         },
         "feature_adoption": adoption,
-        "adoption_by_current_plan": adoption_by_current_plan,
+        "adoption_by_plan_at_event_time": {
+            "period_start": current_start.isoformat().replace("+00:00", "Z"),
+            "period_end": cutoff.isoformat().replace("+00:00", "Z"),
+            "plans": plan_adoption,
+        },
         "historical_plan_event_counts": {
             plan: dict(sorted(counts.items()))
             for plan, counts in sorted(historical_plan_usage.items())
@@ -307,6 +399,9 @@ def analyze_project(project, *, cutoff: datetime = ANALYSIS_CUTOFF) -> dict:
             ),
         },
         "cross_product": {
+            "period_days": 30,
+            "period_start": current_start.isoformat().replace("+00:00", "Z"),
+            "period_end": cutoff.isoformat().replace("+00:00", "Z"),
             "helpdesk_and_contact_center": sorted(
                 account
                 for account, products in products_by_account.items()
@@ -330,12 +425,28 @@ def analyze_project(project, *, cutoff: datetime = ANALYSIS_CUTOFF) -> dict:
                 if values["decline_percentage"] >= 50
             ),
         },
-        "distinct_users_by_account_product": {
-            account: {
-                product: len(distinct_users[(account, product)])
-                for product in sorted(products_by_account[account])
-            }
-            for account in sorted(products_by_account)
+        "distinct_users_by_account_product_feature": {
+            "period_days": 30,
+            "period_start": current_start.isoformat().replace("+00:00", "Z"),
+            "period_end": cutoff.isoformat().replace("+00:00", "Z"),
+            "accounts": {
+                account: {
+                    product: {
+                        feature: len(users)
+                        for (candidate_account, candidate_product, feature), users in sorted(
+                            distinct_users.items()
+                        )
+                        if candidate_account == account and candidate_product == product
+                    }
+                    for product in sorted(products_by_account[account])
+                    if any(
+                        candidate_account == account and candidate_product == product
+                        for candidate_account, candidate_product, _ in distinct_users
+                    )
+                }
+                for account in sorted(products_by_account)
+                if any(candidate_account == account for candidate_account, _, _ in distinct_users)
+            },
         },
     }
 
@@ -347,8 +458,8 @@ def assert_expected_results(result: dict) -> list[str]:
         if actual != expected:
             failures.append(f"{label}: expected {expected!r}, got {actual!r}")
 
-    expect("event count", result["validation"]["event_count"], 3521)
-    expect("behavioral event count", result["validation"]["behavioral_event_count"], 3508)
+    expect("event count", result["validation"]["event_count"], 3524)
+    expect("behavioral event count", result["validation"]["behavioral_event_count"], 3511)
     expect("groupidentify count", result["validation"]["groupidentify_count"], 13)
     expect("group profile count", result["validation"]["group_profile_count"], 10)
     expect(
@@ -370,6 +481,11 @@ def assert_expected_results(result: dict) -> list[str]:
     )
     expect("trial conversion usage", result["trials"]["used_before_conversion"], ["echo"])
     expect("trial expiry usage", result["trials"]["used_then_expired"], ["foxtrot"])
+    expect(
+        "high adoption and low depth",
+        result["high_adoption_low_depth"],
+        ["supervisor_listen"],
+    )
     if "golf" not in result["weekly_decline"]["declining_accounts"]:
         failures.append("weekly decline: golf was not classified as declining")
     initiated = result["funnels"]["call_initiated_to_call_connected"]
