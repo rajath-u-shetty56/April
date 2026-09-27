@@ -38,6 +38,30 @@ uv run ruff check .
 uv run python manage.py makemigrations --check --dry-run
 ```
 
+## Synthetic analytics validation
+
+The deterministic validation dataset exercises ten weeks of account-level activity across
+Helpdesk, Contact Center, Rise, and BI. Use a dedicated empty project and one of its ingestion
+credentials so the expected-result assertions are not mixed with unrelated events.
+
+```bash
+export ANALYTICS_BASE_URL=http://localhost:8000
+export ANALYTICS_INGESTION_KEY='<project ingestion credential>'
+uv run python scripts/mock_analytics_dataset.py
+
+# Run the same command again to verify every event is reported as a duplicate.
+uv run python scripts/mock_analytics_dataset.py
+
+export ANALYTICS_PROJECT_ID='<project UUID>'
+uv run python scripts/mock_analytics_analysis.py
+```
+
+The producer communicates only through `/api/v1/capture/` and `/api/v1/bulk/`. The analysis
+script reads the accepted PostgreSQL rows through Django, prints results for the validation
+questions, and exits nonzero when an expected scenario is missing. Historical plan and entitlement
+results are explicitly conditional on complete, correctly timestamped `$groupidentify` history;
+`GroupProfile` remains the source for current account state.
+
 ## API
 
 The staff-only management API is mounted under `/api/v1/`:
