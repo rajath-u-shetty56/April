@@ -102,6 +102,24 @@ maximum; responses report `returned_count`, `total_count`, and `truncated`, whil
 continue to use the full matching population. Feature, funnel, entitlement, and trial meanings come
 from reviewed application configuration rather than caller-supplied predicates.
 
+`find_cross_product_accounts` uses two related populations. Its bounded account list and aggregate
+event counts cover accounts observed in every requested product. Its `user_overlap` aggregates
+cover all accounts with activity in any requested product, as declared by the response's
+`population_basis`; this preserves meaningful pairwise overlap when no account used every product.
+Raw distinct IDs are never returned.
+
+Feature adoption classifies `high_adoption_low_depth` using period-end entitled adopters only. The
+deterministic rule requires at least two entitled adopting accounts, an entitled adoption rate of
+at least 50%, and an entitled-adopter median depth of at most two qualifying events. Each feature
+result returns those configured thresholds, its numerator and denominator, actual rate and median,
+and the final classification so callers can explain the result.
+
+Product adoption deliberately uses two usage bases. `overall.usage_basis` is
+`any_observed_product_event_in_period`, so lifecycle events count toward overall product usage.
+Each feature result has `usage_basis` equal to `qualifying_feature_events_in_period`, so only events
+mapped to that feature in deterministic semantics count toward its adoption and depth. The overall
+and feature numerators therefore answer different questions by design.
+
 This MCP server supports local stdio only. Its stdout is reserved for protocol messages, so launch
 it from an MCP client rather than treating its output as a human-readable CLI. Diagnostics go to
 stderr. It provides no arbitrary SQL, raw user-identifier export, write operations, HTTP transport,

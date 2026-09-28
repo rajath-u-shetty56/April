@@ -1,4 +1,4 @@
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict
 
@@ -60,6 +60,14 @@ class AccountActivityOutput(OutputModel):
     distinct_users_by_product: dict[str, int]
 
 
+class UserOverlapOutput(OutputModel):
+    population_basis: str
+    products: list[str]
+    users_by_product: dict[str, int]
+    users_in_all_products: int
+    pairwise_overlap: dict[str, int]
+
+
 class CrossProductOutput(OutputModel):
     scope: ScopeOutput
     period: TimeRangeOutput
@@ -67,7 +75,43 @@ class CrossProductOutput(OutputModel):
     products: list[str]
     accounts: BoundedMetadataOutput
     aggregate_event_counts: dict[str, int]
-    user_overlap: dict[str, Any] | None
+    user_overlap: UserOverlapOutput | None
+
+
+class AdoptionRateOutput(OutputModel):
+    numerator: int
+    denominator: int
+    rate: float
+
+
+class HighAdoptionLowDepthOutput(OutputModel):
+    adoption_numerator: int
+    adoption_denominator: int
+    adoption_rate: float
+    adoption_rate_threshold: float
+    minimum_account_threshold: int
+    median_depth_threshold: float
+    actual_median_depth: float
+    classified: bool
+
+
+class OverallAdoptionOutput(OutputModel):
+    usage_basis: Literal["any_observed_product_event_in_period"]
+    observed_account_count: int
+    observed_accounts: BoundedMetadataOutput
+    period_end_entitled_accounts: BoundedMetadataOutput
+    period_end_entitled_adoption: AdoptionRateOutput
+    entitled_without_usage: BoundedMetadataOutput
+
+
+class FeatureAdoptionOutput(OutputModel):
+    usage_basis: Literal["qualifying_feature_events_in_period"]
+    observed_adopting_account_count: int
+    observed_event_count: int
+    median_events_per_adopting_account: float
+    high_adoption_low_depth: HighAdoptionLowDepthOutput
+    period_end_entitled_adoption: AdoptionRateOutput
+    adopting_accounts: BoundedMetadataOutput
 
 
 class AdoptionOutput(OutputModel):
@@ -75,8 +119,8 @@ class AdoptionOutput(OutputModel):
     period: TimeRangeOutput
     interpretation: InterpretationOutput
     product: str
-    overall: dict[str, Any]
-    features: dict[str, dict[str, Any]]
+    overall: OverallAdoptionOutput
+    features: dict[str, FeatureAdoptionOutput]
     plans: dict[str, dict[str, Any]] | None = None
 
 

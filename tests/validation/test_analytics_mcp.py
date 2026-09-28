@@ -176,6 +176,9 @@ async def test_mcp_answers_validation_questions_with_scoped_aggregate_evidence(
     ]
     assert [item["account_key"] for item in cross_three["accounts"]["items"]] == ["acme"]
     overlap = shared_overlap["user_overlap"]
+    assert overlap["population_basis"] == (
+        "all_accounts_with_activity_in_any_requested_product"
+    )
     assert overlap["users_by_product"]["rise"] > 0
     assert overlap["pairwise_overlap"]["contact_center|helpdesk"] > 0
     assert overlap["pairwise_overlap"]["helpdesk|rise"] > 0
@@ -188,7 +191,19 @@ async def test_mcp_answers_validation_questions_with_scoped_aggregate_evidence(
         "rate": 75.0,
     }
     assert adoption["overall"]["entitled_without_usage"]["items"] == ["charlie", "hotel"]
-    assert adoption["features"]["supervisor_listen"]["high_adoption_low_depth"] is True
+    listen_classification = adoption["features"]["supervisor_listen"][
+        "high_adoption_low_depth"
+    ]
+    assert listen_classification == {
+        "adoption_numerator": 5,
+        "adoption_denominator": 8,
+        "adoption_rate": 62.5,
+        "adoption_rate_threshold": 50.0,
+        "minimum_account_threshold": 2,
+        "median_depth_threshold": 2.0,
+        "actual_median_depth": 1.0,
+        "classified": True,
+    }
     assert adoption["plans"]["pro"]["features"]["supervisor_listen"]["rate"] == 75.0
     acme_users = next(item for item in users["accounts"]["items"] if item["account_key"] == "acme")
     assert acme_users["features"]["call_transfer"] == 4

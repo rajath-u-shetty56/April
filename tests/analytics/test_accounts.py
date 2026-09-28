@@ -152,6 +152,7 @@ def test_cross_product_accounts_are_bounded_but_overlap_uses_full_population(pro
         "rise": 3,
     }
     assert payload["user_overlap"] == {
+        "population_basis": "all_accounts_with_activity_in_any_requested_product",
         "products": ["contact_center", "helpdesk", "rise"],
         "users_by_product": {"contact_center": 3, "helpdesk": 4, "rise": 3},
         "users_in_all_products": 3,
@@ -210,6 +211,9 @@ def test_shared_namespace_overlap_uses_all_product_users_not_only_all_product_ac
     ).to_dict()
 
     assert payload["accounts"]["total_count"] == 0
+    assert payload["user_overlap"]["population_basis"] == (
+        "all_accounts_with_activity_in_any_requested_product"
+    )
     assert payload["user_overlap"]["pairwise_overlap"] == {
         "contact_center|helpdesk": 1,
         "contact_center|rise": 0,

@@ -165,7 +165,7 @@ def analyze_project(project, *, cutoff=ANALYSIS_CUTOFF) -> dict:
         "high_adoption_low_depth": sorted(
             feature
             for feature, values in adoption_result["features"].items()
-            if values["high_adoption_low_depth"]
+            if values["high_adoption_low_depth"]["classified"]
         ),
         "abandonment": abandonment,
         "entitlement": {

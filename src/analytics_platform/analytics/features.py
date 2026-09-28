@@ -208,22 +208,42 @@ def analyze_product_adoption(
         account_counts[(event.account_key, event.feature)] += 1
 
     feature_results: dict[str, dict[str, object]] = {}
+    classification = SEMANTICS.high_adoption_low_depth
     for definition in definitions:
         adopting = accounts_by_feature[definition.key]
         depths = [account_counts[(account, definition.key)] for account in adopting]
         median_depth = float(statistics.median(depths)) if depths else 0.0
         entitled_adopters = adopting & entitled_at_end
+        entitled_depths = [
+            account_counts[(account, definition.key)] for account in entitled_adopters
+        ]
+        entitled_median_depth = (
+            float(statistics.median(entitled_depths)) if entitled_depths else 0.0
+        )
+        entitled_adoption_rate = _rate(len(entitled_adopters), len(entitled_at_end))
         feature_results[definition.key] = {
+            "usage_basis": "qualifying_feature_events_in_period",
             "observed_adopting_account_count": len(adopting),
             "observed_event_count": event_counts[definition.key],
             "median_events_per_adopting_account": median_depth,
-            "high_adoption_low_depth": (
-                len(adopting) >= max(2, len(entitled_at_end) / 2) and median_depth <= 2
-            ),
+            "high_adoption_low_depth": {
+                "adoption_numerator": len(entitled_adopters),
+                "adoption_denominator": len(entitled_at_end),
+                "adoption_rate": entitled_adoption_rate,
+                "adoption_rate_threshold": classification.adoption_rate_threshold,
+                "minimum_account_threshold": classification.minimum_account_threshold,
+                "median_depth_threshold": classification.median_depth_threshold,
+                "actual_median_depth": entitled_median_depth,
+                "classified": (
+                    len(entitled_adopters) >= classification.minimum_account_threshold
+                    and entitled_adoption_rate >= classification.adoption_rate_threshold
+                    and entitled_median_depth <= classification.median_depth_threshold
+                ),
+            },
             "period_end_entitled_adoption": {
                 "numerator": len(entitled_adopters),
                 "denominator": len(entitled_at_end),
-                "rate": _rate(len(entitled_adopters), len(entitled_at_end)),
+                "rate": entitled_adoption_rate,
             },
             "adopting_accounts": BoundedList.from_items(sorted(adopting), limit=limit).to_dict(),
         }
@@ -278,12 +298,13 @@ def analyze_product_adoption(
         period=period,
         product=product,
         interpretation=Interpretation(
-            usage_window="qualifying_events_in_period",
+            usage_window="product_and_feature_usage_in_period_with_nested_bases",
             entitlement_basis="period_end",
             plan_attribution_basis="event_time" if include_plan_breakdown else None,
             historical_profile_reliability=HISTORICAL_PROFILE_RELIABILITY,
         ),
         overall={
+            "usage_basis": "any_observed_product_event_in_period",
             "observed_account_count": len(observed_accounts),
             "observed_accounts": BoundedList.from_items(
                 sorted(observed_accounts), limit=limit

@@ -148,6 +148,7 @@ def find_cross_product_accounts(
             for product in unique_products
         }
         user_overlap = {
+            "population_basis": "all_accounts_with_activity_in_any_requested_product",
             "products": list(unique_products),
             "users_by_product": {
                 product: len(aggregate_users[product]) for product in unique_products

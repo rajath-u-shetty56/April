@@ -58,9 +58,17 @@ class FunnelDefinition:
 
 
 @dataclass(frozen=True)
+class AdoptionClassificationDefinition:
+    adoption_rate_threshold: float
+    minimum_account_threshold: int
+    median_depth_threshold: float
+
+
+@dataclass(frozen=True)
 class SemanticRegistry:
     products: Mapping[str, ProductDefinition]
     funnels: Mapping[str, FunnelDefinition]
+    high_adoption_low_depth: AdoptionClassificationDefinition
 
     def get_product(self, product: str) -> ProductDefinition:
         try:
@@ -178,4 +186,9 @@ _FUNNELS = {
 SEMANTICS = SemanticRegistry(
     products=MappingProxyType(_PRODUCTS),
     funnels=MappingProxyType(_FUNNELS),
+    high_adoption_low_depth=AdoptionClassificationDefinition(
+        adoption_rate_threshold=50.0,
+        minimum_account_threshold=2,
+        median_depth_threshold=2.0,
+    ),
 )

@@ -39,12 +39,26 @@ async def test_tool_discovery_exposes_only_reviewed_read_only_tools():
     }
     assert {tool.name for tool in result.tools} == expected
     for tool in result.tools:
+        assert tool.description
+        assert len(tool.description.strip()) >= 40
         assert tool.annotations.read_only_hint is True
         assert tool.annotations.open_world_hint is False
         assert tool.output_schema is not None
         schema_text = str(tool.input_schema).lower()
         for forbidden in ("project_id", "workspace", "sql", "predicate"):
             assert forbidden not in schema_text
+    tools_by_name = {tool.name: tool for tool in result.tools}
+    assert "population_basis" in str(
+        tools_by_name["find_cross_product_accounts"].output_schema
+    )
+    adoption_schema = str(tools_by_name["analyze_product_adoption"].output_schema)
+    assert "any_observed_product_event_in_period" in adoption_schema
+    assert "qualifying_feature_events_in_period" in adoption_schema
+    assert "adoption_rate_threshold" in adoption_schema
+    assert "actual_median_depth" in adoption_schema
+    adoption_description = tools_by_name["analyze_product_adoption"].description
+    assert "any observed product event" in adoption_description
+    assert "qualifying feature events" in adoption_description
 
 
 @pytest.mark.anyio
@@ -119,6 +133,45 @@ def _error_text(result) -> str:
 
 @pytest.mark.anyio
 @pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize(
+    ("start", "end", "expected_message"),
+    [
+        (
+            "not-a-timestamp",
+            "2026-10-01T00:00:00Z",
+            "start and end must be ISO 8601 timestamps",
+        ),
+        (
+            "2026-09-01T00:00:00",
+            "2026-10-01T00:00:00Z",
+            "start must be timezone-aware",
+        ),
+        (
+            "2026-10-01T00:00:00Z",
+            "2026-09-01T00:00:00Z",
+            "start must be before end",
+        ),
+    ],
+)
+async def test_period_errors_preserve_specific_safe_validation_messages(
+    project, start, end, expected_message
+):
+    async with Client(create_server(project.pk)) as client:
+        result = await client.call_tool(
+            "summarize_account_activity",
+            {"account_key": "acme", "start": start, "end": end},
+        )
+
+    assert result.is_error is True
+    text = _error_text(result)
+    assert expected_message in text
+    assert "Traceback" not in text
+    assert "ValueError" not in text
+    assert "DATABASE_URL" not in text
+
+
+@pytest.mark.anyio
+@pytest.mark.django_db(transaction=True)
 async def test_tool_errors_are_sanitized_for_invalid_inputs_and_unavailable_scope(
     project, inactive_project
 ):
@@ -164,7 +217,9 @@ async def test_tool_errors_are_sanitized_for_invalid_inputs_and_unavailable_scop
 
 @pytest.mark.anyio
 @pytest.mark.django_db(transaction=True)
-async def test_unexpected_service_failure_is_generic_but_logged(project, monkeypatch, caplog):
+async def test_unexpected_service_failure_is_generic_and_safely_logged(
+    project, monkeypatch, caplog
+):
     from analytics_platform.mcp_adapter import server as server_module
 
     def fail(*args, **kwargs):
@@ -179,4 +234,7 @@ async def test_unexpected_service_failure_is_generic_but_logged(project, monkeyp
     assert result.is_error is True
     assert "Analytics query failed" in _error_text(result)
     assert "fake-secret" not in _error_text(result)
-    assert "fake-secret" in caplog.text
+    assert "fake-secret" not in caplog.text
+    assert "RuntimeError" in caplog.text
+    assert str(project.pk) in caplog.text
+    assert "Traceback" not in caplog.text

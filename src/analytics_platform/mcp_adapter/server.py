@@ -67,9 +67,11 @@ def _project(project_id: UUID) -> Project:
 
 def _period(start: str, end: str) -> TimeRange:
     try:
-        return TimeRange.create(datetime.fromisoformat(start), datetime.fromisoformat(end))
+        parsed_start = datetime.fromisoformat(start)
+        parsed_end = datetime.fromisoformat(end)
     except ValueError as exc:
         raise AnalyticsInputError("start and end must be ISO 8601 timestamps") from exc
+    return TimeRange.create(parsed_start, parsed_end)
 
 
 def _execute[ResultT](operation: Callable[[Project], ResultT], project_id: UUID) -> ResultT:
@@ -78,7 +80,11 @@ def _execute[ResultT](operation: Callable[[Project], ResultT], project_id: UUID)
     except (AnalyticsInputError, ValidationError) as exc:
         raise ToolError(str(exc)) from exc
     except Exception as exc:
-        logger.exception("Unexpected analytics MCP query failure for project %s", project_id)
+        logger.error(
+            "Analytics MCP query failed project_id=%s exception_type=%s",
+            project_id,
+            type(exc).__name__,
+        )
         raise ToolError("Analytics query failed") from exc
     finally:
         connections.close_all()
@@ -92,6 +98,12 @@ def create_server(project_id: UUID) -> MCPServer:
 
     @server.tool(annotations=READ_ONLY, structured_output=True)
     def describe_project(event_definition_limit: int = 50) -> ProjectDescriptionOutput:
+        """Describe the configured project before deeper analysis.
+
+        Use this to discover available products, observed event definitions, counts, and
+        event-time coverage. ``event_definition_limit`` bounds the catalog list; its
+        metadata reports truncation. Results describe stored observations, not entitlement.
+        """
         return _execute(
             lambda project: ProjectDescriptionOutput.model_validate(
                 describe_project_service(
@@ -103,6 +115,11 @@ def create_server(project_id: UUID) -> MCPServer:
 
     @server.tool(annotations=READ_ONLY, structured_output=True)
     def get_account_profile(account_key: str) -> AccountProfileOutput:
+        """Return the current merged profile state for one account.
+
+        Use ``account_key`` to inspect current plan, status, and other group properties.
+        This is the latest materialized profile, not state at a historical event time.
+        """
         return _execute(
             lambda project: AccountProfileOutput.model_validate(
                 get_account_profile_service(project, account_key).to_dict()
@@ -112,6 +129,11 @@ def create_server(project_id: UUID) -> MCPServer:
 
     @server.tool(annotations=READ_ONLY, structured_output=True)
     def summarize_account_activity(account_key: str, start: str, end: str) -> AccountActivityOutput:
+        """Summarize observed product events and distinct users for one account.
+
+        Use this for an account's activity in the half-open ISO-8601 window ``[start, end)``.
+        Counts represent observed usage only; they do not establish entitlement or profile state.
+        """
         return _execute(
             lambda project: AccountActivityOutput.model_validate(
                 summarize_account_activity_service(
@@ -125,6 +147,13 @@ def create_server(project_id: UUID) -> MCPServer:
     def find_cross_product_accounts(
         products: list[str], start: str, end: str, limit: int = 50
     ) -> CrossProductOutput:
+        """Find accounts with observed use of every requested product in a time window.
+
+        Supply at least two product keys and ISO-8601 ``start``/``end`` timestamps; ``limit``
+        bounds matching account evidence. Account event totals cover matching accounts only.
+        Aggregated user overlap returns no raw IDs and explicitly identifies its broader
+        population: all accounts active in any requested product during the observed window.
+        """
         return _execute(
             lambda project: CrossProductOutput.model_validate(
                 find_cross_product_accounts_service(
@@ -143,6 +172,15 @@ def create_server(project_id: UUID) -> MCPServer:
         include_plan_breakdown: bool = False,
         account_limit: int = 50,
     ) -> AdoptionOutput:
+        """Analyze product and qualifying-feature adoption against historical entitlement.
+
+        Use ``product`` and optional deterministic ``feature`` over ``[start, end)``.
+        Overall product usage counts any observed product event, while feature adoption counts
+        only qualifying feature events from deterministic semantics. Overall entitlement is profile
+        state at period end; optional plan breakdown attributes each qualifying feature event to
+        historical plan/status at event time. ``account_limit`` bounds evidence lists. The result
+        exposes thresholds and entitled evidence for high-adoption/low-depth classification.
+        """
         return _execute(
             lambda project: AdoptionOutput.model_validate(
                 analyze_product_adoption_service(
@@ -166,6 +204,12 @@ def create_server(project_id: UUID) -> MCPServer:
         account_key: str | None = None,
         account_limit: int = 50,
     ) -> FeatureUsersOutput:
+        """Count distinct users of deterministic qualifying features by account.
+
+        Use ``product``, optional ``feature`` or ``account_key``, and the half-open ISO-8601
+        window. ``account_limit`` bounds account rows. This is observed qualifying usage,
+        returns aggregates without raw user IDs, and does not imply entitlement.
+        """
         return _execute(
             lambda project: FeatureUsersOutput.model_validate(
                 count_feature_users_service(
@@ -187,6 +231,12 @@ def create_server(project_id: UUID) -> MCPServer:
         end: str,
         account_key: str | None = None,
     ) -> FunnelOutput:
+        """Measure ordered completion of a named deterministic funnel.
+
+        Use a configured ``funnel`` with ISO-8601 ``start``/``end`` and optional account scope.
+        Starts are matched to later completions by the configured correlation property; results
+        represent observed event sequences rather than current profile or entitlement state.
+        """
         return _execute(
             lambda project: FunnelOutput.model_validate(
                 analyze_funnel_service(
@@ -206,6 +256,13 @@ def create_server(project_id: UUID) -> MCPServer:
         decline_threshold: float = 50.0,
         account_limit: int = 50,
     ) -> AccountChangeOutput:
+        """Find accounts with observed usage decline or feature abandonment.
+
+        ``kind`` selects usage decline or feature abandonment; ``product`` and optional
+        deterministic ``feature`` define usage. ``[start, end)`` is compared with the preceding
+        equal window, ``decline_threshold`` is a percent, and ``account_limit`` bounds evidence.
+        This compares observed events, not profile or entitlement changes.
+        """
         return _execute(
             lambda project: AccountChangeOutput.model_validate(
                 analyze_account_change_service(
@@ -225,6 +282,12 @@ def create_server(project_id: UUID) -> MCPServer:
     def analyze_trial_outcomes(
         product: str, start: str, end: str, account_limit: int = 50
     ) -> TrialOutcomeOutput:
+        """Classify historical trial episodes as converted or expired with prior usage.
+
+        Use ``product`` and an ISO-8601 ``[start, end)`` transition window; ``account_limit``
+        bounds account evidence. Trial, conversion, and expiry meanings come from deterministic
+        semantics, and historical states depend on complete, correctly timestamped profile events.
+        """
         return _execute(
             lambda project: TrialOutcomeOutput.model_validate(
                 analyze_trial_outcomes_service(

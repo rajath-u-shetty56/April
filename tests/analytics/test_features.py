@@ -168,7 +168,7 @@ def test_overall_adoption_uses_entitlement_immediately_before_period_end(project
     listen = payload["features"]["supervisor_listen"]
 
     assert payload["interpretation"] == {
-        "usage_window": "qualifying_events_in_period",
+        "usage_window": "product_and_feature_usage_in_period_with_nested_bases",
         "entitlement_basis": "period_end",
         "historical_profile_reliability": (
             "conditional_on_complete_correctly_timestamped_groupidentify_history"
@@ -180,9 +180,58 @@ def test_overall_adoption_uses_entitlement_immediately_before_period_end(project
         "denominator": 2,
         "rate": 50.0,
     }
+    assert listen["high_adoption_low_depth"] == {
+        "adoption_numerator": 1,
+        "adoption_denominator": 2,
+        "adoption_rate": 50.0,
+        "adoption_rate_threshold": 50.0,
+        "minimum_account_threshold": 2,
+        "median_depth_threshold": 2.0,
+        "actual_median_depth": 1.0,
+        "classified": False,
+    }
     assert listen["adopting_accounts"]["returned_count"] == 1
     assert listen["adopting_accounts"]["total_count"] == 3
     assert listen["adopting_accounts"]["truncated"] is True
+
+
+def test_high_adoption_classification_excludes_unentitled_adopters(project):
+    start = datetime(2026, 9, 1, tzinfo=UTC)
+    end = start + timedelta(days=30)
+    for account in ("entitled-user", "entitled-no-use", "entitled-no-use-2"):
+        _identify(
+            project,
+            account=account,
+            timestamp=start - timedelta(days=1),
+            status="active",
+            plan="pro",
+        )
+    for account in ("entitled-user", "unentitled-1", "unentitled-2", "unentitled-3"):
+        _event(
+            project,
+            account=account,
+            actor=f"private:{account}",
+            name="listen_started",
+            timestamp=start + timedelta(days=1),
+        )
+
+    result = analyze_product_adoption(
+        project,
+        "contact_center",
+        TimeRange.create(start, end),
+        feature="supervisor_listen",
+    ).to_dict()["features"]["supervisor_listen"]["high_adoption_low_depth"]
+
+    assert result == {
+        "adoption_numerator": 1,
+        "adoption_denominator": 3,
+        "adoption_rate": 33.33,
+        "adoption_rate_threshold": 50.0,
+        "minimum_account_threshold": 2,
+        "median_depth_threshold": 2.0,
+        "actual_median_depth": 1.0,
+        "classified": False,
+    }
 
 
 def test_overall_product_adoption_counts_lifecycle_usage_and_entitled_nonusers(project):
@@ -208,7 +257,11 @@ def test_overall_product_adoption_counts_lifecycle_usage_and_entitled_nonusers(p
         project, "contact_center", TimeRange.create(start, end), account_limit=1
     ).to_dict()
 
+    assert payload["interpretation"]["usage_window"] == (
+        "product_and_feature_usage_in_period_with_nested_bases"
+    )
     assert payload["overall"] == {
+        "usage_basis": "any_observed_product_event_in_period",
         "observed_account_count": 1,
         "observed_accounts": {
             "items": ["lifecycle-user"],
@@ -234,6 +287,10 @@ def test_overall_product_adoption_counts_lifecycle_usage_and_entitled_nonusers(p
             "truncated": False,
         },
     }
+    assert payload["features"]["supervisor_listen"]["usage_basis"] == (
+        "qualifying_feature_events_in_period"
+    )
+    assert payload["features"]["supervisor_listen"]["observed_adopting_account_count"] == 0
 
 
 def test_plan_adoption_uses_entitlement_at_event_time_and_historical_denominators(project):
