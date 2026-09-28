@@ -184,21 +184,15 @@ async def test_mcp_answers_validation_questions_with_scoped_aggregate_evidence(
     assert adoption["interpretation"]["plan_attribution_basis"] == "event_time"
     assert adoption["features"]["supervisor_listen"]["high_adoption_low_depth"] is True
     assert adoption["plans"]["pro"]["features"]["supervisor_listen"]["rate"] == 75.0
-    acme_users = next(
-        item for item in users["accounts"]["items"] if item["account_key"] == "acme"
-    )
+    acme_users = next(item for item in users["accounts"]["items"] if item["account_key"] == "acme")
     assert acme_users["features"]["call_transfer"] == 4
     assert acme_users["features"]["supervisor_listen"] == 2
 
     assert all(result["started"] > result["completed"] for result in funnels.values())
     assert "golf" in [item["account_key"] for item in decline["accounts"]["items"]]
     assert [item["account_key"] for item in abandonment["accounts"]["items"]] == ["hotel"]
-    assert [
-        item["account_key"] for item in trials["used_before_conversion"]["items"]
-    ] == ["echo"]
-    assert [item["account_key"] for item in trials["used_then_expired"]["items"]] == [
-        "foxtrot"
-    ]
+    assert [item["account_key"] for item in trials["used_before_conversion"]["items"]] == ["echo"]
+    assert [item["account_key"] for item in trials["used_then_expired"]["items"]] == ["foxtrot"]
 
     for payload in outputs.values():
         if "period" in payload:

@@ -10,9 +10,10 @@ pytestmark = pytest.mark.django_db
 
 
 def test_resolve_project_id_accepts_only_active_configured_scope(project):
-    assert run_analytics_mcp.resolve_project_id(
-        {"ANALYTICS_PROJECT_ID": str(project.pk)}
-    ) == project.pk
+    assert (
+        run_analytics_mcp.resolve_project_id({"ANALYTICS_PROJECT_ID": str(project.pk)})
+        == project.pk
+    )
 
 
 @pytest.mark.parametrize(
@@ -41,9 +42,7 @@ def test_resolve_project_id_rejects_inactive_project_and_workspace(workspace):
 
     for project in (inactive_project, project_in_inactive_workspace):
         with pytest.raises(run_analytics_mcp.StartupConfigurationError, match="unavailable"):
-            run_analytics_mcp.resolve_project_id(
-                {"ANALYTICS_PROJECT_ID": str(project.pk)}
-            )
+            run_analytics_mcp.resolve_project_id({"ANALYTICS_PROJECT_ID": str(project.pk)})
 
 
 def test_import_and_successful_resolution_write_nothing(project, capsys):

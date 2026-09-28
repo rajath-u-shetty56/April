@@ -143,10 +143,7 @@ def find_cross_product_accounts(
     if len(namespaces) == 1:
         aggregate_users = {
             product: set().union(
-                *(
-                    users_by_account_product[(account, product)]
-                    for account in events_by_account
-                )
+                *(users_by_account_product[(account, product)] for account in events_by_account)
             )
             for product in unique_products
         }

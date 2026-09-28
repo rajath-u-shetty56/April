@@ -67,9 +67,7 @@ def analyze_project(project, *, cutoff=ANALYSIS_CUTOFF) -> dict:
             "account_count": values["observed_adopting_account_count"],
             "current_entitled_rate": entitled["rate"],
             "event_count": values["observed_event_count"],
-            "median_events_per_adopting_account": values[
-                "median_events_per_adopting_account"
-            ],
+            "median_events_per_adopting_account": values["median_events_per_adopting_account"],
         }
 
     plan_adoption = {}
@@ -151,9 +149,7 @@ def analyze_project(project, *, cutoff=ANALYSIS_CUTOFF) -> dict:
             project, product_key, current_period, account_limit=200
         ).to_dict()
         for account in _items(usage["accounts"]):
-            distinct_users.setdefault(account["account_key"], {})[product_key] = account[
-                "features"
-            ]
+            distinct_users.setdefault(account["account_key"], {})[product_key] = account["features"]
 
     entitled_set = set(entitled_accounts)
     observed_set = set(observed_accounts)
@@ -219,9 +215,7 @@ def analyze_project(project, *, cutoff=ANALYSIS_CUTOFF) -> dict:
             ],
         },
         "weekly_decline": {
-            "declining_accounts": [
-                item["account_key"] for item in _items(decline["accounts"])
-            ]
+            "declining_accounts": [item["account_key"] for item in _items(decline["accounts"])]
         },
         "distinct_users_by_account_product_feature": {
             "period_days": 30,

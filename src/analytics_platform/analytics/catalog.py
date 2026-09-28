@@ -70,9 +70,7 @@ class AccountProfileResult:
         }
 
 
-def describe_project(
-    project: Project, *, event_definition_limit: int = 50
-) -> ProjectDescription:
+def describe_project(project: Project, *, event_definition_limit: int = 50) -> ProjectDescription:
     limit = validate_limit(event_definition_limit)
     event_query = Event.objects.filter(project=project)
     definition_query = EventDefinition.objects.filter(project=project).order_by(

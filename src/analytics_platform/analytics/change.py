@@ -107,9 +107,7 @@ def analyze_account_change(
                 )
         threshold = float(decline_threshold)
     else:
-        previous_events = qualifying_events(
-            project, product, comparison, feature=feature
-        )
+        previous_events = qualifying_events(project, product, comparison, feature=feature)
         current_events = qualifying_events(project, product, period, feature=feature)
         previous = Counter(event.account_key for event in previous_events)
         current = Counter(event.account_key for event in current_events)

@@ -111,9 +111,7 @@ def create_server(project_id: UUID) -> MCPServer:
         )
 
     @server.tool(annotations=READ_ONLY, structured_output=True)
-    def summarize_account_activity(
-        account_key: str, start: str, end: str
-    ) -> AccountActivityOutput:
+    def summarize_account_activity(account_key: str, start: str, end: str) -> AccountActivityOutput:
         return _execute(
             lambda project: AccountActivityOutput.model_validate(
                 summarize_account_activity_service(

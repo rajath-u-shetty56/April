@@ -84,8 +84,7 @@ def _store_dataset(project):
         for envelope in envelopes
     )
     definitions = {
-        (event["properties"]["product"], event["event"])
-        for event in dataset.behavioral_events
+        (event["properties"]["product"], event["event"]) for event in dataset.behavioral_events
     }
     EventDefinition.objects.bulk_create(
         EventDefinition(project=project, product_key=product, name=name)
@@ -133,20 +132,22 @@ def test_analysis_answers_core_account_product_and_trial_questions(project):
     pro_listen = result["adoption_by_plan_at_event_time"]["plans"]["pro"]["features"][
         "supervisor_listen"
     ]
-    assert result["adoption_by_plan_at_event_time"]["plans"]["pro"][
-        "eligible_account_count"
-    ] == 4
+    assert result["adoption_by_plan_at_event_time"]["plans"]["pro"]["eligible_account_count"] == 4
     assert pro_listen == {
         "adopting_account_count": 3,
         "adopting_accounts": ["acme", "golf", "juliet"],
         "rate": 75.0,
     }
-    assert result["adoption_by_plan_at_event_time"]["plans"]["enterprise"][
-        "features"
-    ]["supervisor_listen"]["rate"] == 50.0
-    assert result["adoption_by_plan_at_event_time"]["interpretation"][
-        "plan_attribution_basis"
-    ] == "event_time"
+    assert (
+        result["adoption_by_plan_at_event_time"]["plans"]["enterprise"]["features"][
+            "supervisor_listen"
+        ]["rate"]
+        == 50.0
+    )
+    assert (
+        result["adoption_by_plan_at_event_time"]["interpretation"]["plan_attribution_basis"]
+        == "event_time"
+    )
 
 
 def test_analysis_matches_expected_synthetic_outcomes(project):
@@ -177,9 +178,7 @@ def test_funnels_match_events_by_call_id_not_only_aggregate_counts(project):
     assert initiated["started"] > initiated["completed"]
     assert initiated["lost"] == initiated["started"] - initiated["completed"]
     assert initiated["completion_rate"] < 100
-    assert result["funnels"][
-        "call_transfer_initiated_to_call_transfer_completed"
-    ]["lost"] > 0
+    assert result["funnels"]["call_transfer_initiated_to_call_transfer_completed"]["lost"] > 0
     assert result["funnels"]["callback_requested_to_callback_fulfilled"]["lost"] > 0
 
 

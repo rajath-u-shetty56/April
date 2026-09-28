@@ -91,9 +91,7 @@ def test_feature_abandonment_uses_qualifying_events(project):
 
 
 def test_change_analysis_validates_kind_threshold_and_feature(project):
-    period = TimeRange.create(
-        datetime(2026, 9, 1, tzinfo=UTC), datetime(2026, 9, 2, tzinfo=UTC)
-    )
+    period = TimeRange.create(datetime(2026, 9, 1, tzinfo=UTC), datetime(2026, 9, 2, tzinfo=UTC))
     with pytest.raises(AnalyticsInputError, match="kind"):
         analyze_account_change(project, "unknown", "contact_center", period)
     with pytest.raises(AnalyticsInputError, match="threshold"):

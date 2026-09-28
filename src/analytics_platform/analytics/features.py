@@ -41,9 +41,7 @@ class FeatureUsersResult:
         return {
             "scope": self.scope.to_dict(),
             "period": self.period.as_dict(),
-            "interpretation": Interpretation(
-                usage_window="qualifying_events_in_period"
-            ).to_dict(),
+            "interpretation": Interpretation(usage_window="qualifying_events_in_period").to_dict(),
             "product": self.product,
             "features": list(self.features),
             "accounts": self.accounts.to_dict(),
@@ -129,9 +127,7 @@ def count_feature_users(
 ) -> FeatureUsersResult:
     limit = validate_limit(account_limit)
     definitions = _selected_features(product, feature)
-    events = qualifying_events(
-        project, product, period, feature=feature, account_key=account_key
-    )
+    events = qualifying_events(project, product, period, feature=feature, account_key=account_key)
     users: dict[tuple[str, str], set[str]] = defaultdict(set)
     for event in events:
         users[(event.account_key, event.feature)].add(event.distinct_id)
@@ -186,9 +182,7 @@ def analyze_product_adoption(
     entitled_at_end = {
         account
         for account, timeline in timelines.items()
-        if timeline.state_at(period.end, inclusive=False).get(
-            product_definition.status_property
-        )
+        if timeline.state_at(period.end, inclusive=False).get(product_definition.status_property)
         in product_definition.entitled_statuses
     }
     accounts_by_feature: dict[str, set[str]] = defaultdict(set)
@@ -217,9 +211,7 @@ def analyze_product_adoption(
                 "denominator": len(entitled_at_end),
                 "rate": _rate(len(entitled_adopters), len(entitled_at_end)),
             },
-            "adopting_accounts": BoundedList.from_items(
-                sorted(adopting), limit=limit
-            ).to_dict(),
+            "adopting_accounts": BoundedList.from_items(sorted(adopting), limit=limit).to_dict(),
         }
 
     plan_results = None

@@ -54,9 +54,7 @@ async def test_real_stdio_server_uses_only_environment_project_scope(project, ca
     assert len(tools.tools) == 9
     assert description.is_error is False
     assert description.structured_content["scope"] == {"project_id": str(project.pk)}
-    assert attempted_override.structured_content["scope"] == {
-        "project_id": str(project.pk)
-    }
+    assert attempted_override.structured_content["scope"] == {"project_id": str(project.pk)}
     captured = capfd.readouterr()
     assert "DATABASE_URL" not in captured.err
     assert environment.get("DJANGO_SECRET_KEY", "not-present") not in captured.err

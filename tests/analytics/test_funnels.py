@@ -77,9 +77,7 @@ def test_funnel_pairs_each_start_with_one_strictly_later_completion(project, wor
         timestamp=start,
     )
 
-    payload = analyze_funnel(
-        project, "call_connection", TimeRange.create(start, end)
-    ).to_dict()
+    payload = analyze_funnel(project, "call_connection", TimeRange.create(start, end)).to_dict()
 
     assert payload["configuration"] == {
         "start_event": "call_initiated",

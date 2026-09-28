@@ -52,9 +52,7 @@ def _identify(project, *, account, timestamp, status, plan=None):
     )
 
 
-def test_feature_users_apply_predicates_preserve_dimensions_and_bound_evidence(
-    project, workspace
-):
+def test_feature_users_apply_predicates_preserve_dimensions_and_bound_evidence(project, workspace):
     other = Project.objects.create(workspace=workspace, key="other", name="Other")
     start = datetime(2026, 9, 1, tzinfo=UTC)
     end = start + timedelta(days=1)

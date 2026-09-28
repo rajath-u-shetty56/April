@@ -80,9 +80,7 @@ def test_summarize_account_activity_is_time_account_and_project_scoped(project, 
         timestamp=start,
     )
 
-    payload = summarize_account_activity(
-        project, "acme", TimeRange.create(start, end)
-    ).to_dict()
+    payload = summarize_account_activity(project, "acme", TimeRange.create(start, end)).to_dict()
 
     assert payload["scope"] == {"project_id": str(project.pk)}
     assert payload["period"] == {
@@ -221,8 +219,6 @@ def test_shared_namespace_overlap_uses_all_product_users_not_only_all_product_ac
 
 @pytest.mark.parametrize("products", [[], ["helpdesk"], ["helpdesk", "helpdesk"]])
 def test_cross_product_query_requires_two_unique_products(project, products):
-    period = TimeRange.create(
-        datetime(2026, 9, 1, tzinfo=UTC), datetime(2026, 9, 2, tzinfo=UTC)
-    )
+    period = TimeRange.create(datetime(2026, 9, 1, tzinfo=UTC), datetime(2026, 9, 2, tzinfo=UTC))
     with pytest.raises(AnalyticsInputError, match="two unique"):
         find_cross_product_accounts(project, products, period)

@@ -99,17 +99,14 @@ async def test_every_tool_returns_structured_scope_and_evidence(project):
 
     async with Client(server) as client:
         results = {
-            name: await client.call_tool(name, arguments)
-            for name, arguments in calls.items()
+            name: await client.call_tool(name, arguments) for name, arguments in calls.items()
         }
 
     for name, result in results.items():
         assert result.is_error is False, name
         assert result.structured_content["scope"] == {"project_id": str(project.pk)}
     assert results["get_account_profile"].structured_content["found"] is False
-    assert results["describe_project"].structured_content["event_definitions"][
-        "truncated"
-    ] is False
+    assert results["describe_project"].structured_content["event_definitions"]["truncated"] is False
     for name in set(results) - {"describe_project", "get_account_profile"}:
         payload = results[name].structured_content
         assert payload["period"] == {"start": start, "end": end}
@@ -167,9 +164,7 @@ async def test_tool_errors_are_sanitized_for_invalid_inputs_and_unavailable_scop
 
 @pytest.mark.anyio
 @pytest.mark.django_db(transaction=True)
-async def test_unexpected_service_failure_is_generic_but_logged(
-    project, monkeypatch, caplog
-):
+async def test_unexpected_service_failure_is_generic_but_logged(project, monkeypatch, caplog):
     from analytics_platform.mcp_adapter import server as server_module
 
     def fail(*args, **kwargs):
