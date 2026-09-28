@@ -2,7 +2,8 @@
 
 An internal product analytics platform for collecting business events across multiple products and making them available to analytics and AI interfaces.
 
-The repository contains the catalog foundation and synchronous PostgreSQL event ingestion. Analytics queries, business metrics, and MCP tools have not been implemented yet.
+The repository contains the catalog foundation, synchronous PostgreSQL event ingestion, reusable
+analytics queries, and a local read-only MCP server.
 
 ## Current structure
 
@@ -13,6 +14,8 @@ src/analytics_platform/
 ├── events/          # Persisted event occurrences
 ├── group_analytics/ # Current account, organization, or team profiles
 ├── ingestion/       # Credentials, capture, bulk, validation and deduplication
+├── analytics/       # Deterministic read-only analytics services and semantics
+├── mcp_adapter/     # Typed local MCP tools
 └── common/          # Shared model behavior
 ```
 
@@ -69,6 +72,40 @@ adoption reports an eligible-account denominator and attributes each qualifying 
 effective at its timestamp. Synthetic user identifiers are scoped by user store and account.
 Helpdesk, Contact Center, and Rise share the Helpdesk user namespace, while BI keeps its separate
 user namespace because no verified cross-product user mapping exists.
+
+## Local analytics MCP
+
+Set `ANALYTICS_PROJECT_ID` to the one project the process may query, then start the stdio server:
+
+```bash
+export ANALYTICS_PROJECT_ID='<project UUID>'
+uv run python scripts/run_analytics_mcp.py
+```
+
+The project is fixed and validated at startup. Tool arguments cannot select another project, and
+every response includes the resolved project UUID as scope evidence. The server exposes these nine
+read-only tools:
+
+- `describe_project`
+- `get_account_profile`
+- `summarize_account_activity`
+- `find_cross_product_accounts`
+- `analyze_product_adoption`
+- `count_feature_users`
+- `analyze_funnel`
+- `analyze_account_change`
+- `analyze_trial_outcomes`
+
+Date-bearing tools require timezone-aware timestamps and use an inclusive start and exclusive end,
+normalized to UTC. Account and event-definition evidence is bounded to 50 items by default and 200
+maximum; responses report `returned_count`, `total_count`, and `truncated`, while aggregate totals
+continue to use the full matching population. Feature, funnel, entitlement, and trial meanings come
+from reviewed application configuration rather than caller-supplied predicates.
+
+This MCP server supports local stdio only. Its stdout is reserved for protocol messages, so launch
+it from an MCP client rather than treating its output as a human-readable CLI. Diagnostics go to
+stderr. It provides no arbitrary SQL, raw user-identifier export, write operations, HTTP transport,
+or runtime project selector.
 
 ## API
 
