@@ -6,6 +6,7 @@ from datetime import datetime
 from uuid import UUID
 
 from django.core.exceptions import ValidationError
+from django.db import connections
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
@@ -79,6 +80,8 @@ def _execute[ResultT](operation: Callable[[Project], ResultT], project_id: UUID)
     except Exception as exc:
         logger.exception("Unexpected analytics MCP query failure for project %s", project_id)
         raise ToolError("Analytics query failed") from exc
+    finally:
+        connections.close_all()
 
 
 def create_server(project_id: UUID) -> MCPServer:

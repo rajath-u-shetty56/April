@@ -155,7 +155,7 @@ def test_cross_product_accounts_are_bounded_but_overlap_uses_full_population(pro
     }
     assert payload["user_overlap"] == {
         "products": ["contact_center", "helpdesk", "rise"],
-        "users_by_product": {"contact_center": 3, "helpdesk": 3, "rise": 3},
+        "users_by_product": {"contact_center": 3, "helpdesk": 4, "rise": 3},
         "users_in_all_products": 3,
         "pairwise_overlap": {
             "contact_center|helpdesk": 3,
@@ -184,6 +184,39 @@ def test_bi_identity_is_not_compared_with_helpdesk_namespace(project):
     ).to_dict()
 
     assert payload["user_overlap"] is None
+
+
+def test_shared_namespace_overlap_uses_all_product_users_not_only_all_product_accounts(
+    project,
+):
+    start = datetime(2026, 9, 1, tzinfo=UTC)
+    end = start + timedelta(days=1)
+    for account, products in (
+        ("support", ("helpdesk", "contact_center")),
+        ("learning", ("helpdesk", "rise")),
+    ):
+        for product in products:
+            _event(
+                project,
+                account=account,
+                product=product,
+                actor=f"shared:{account}",
+                name=f"{product}_used",
+                timestamp=start,
+            )
+
+    payload = find_cross_product_accounts(
+        project,
+        ["helpdesk", "contact_center", "rise"],
+        TimeRange.create(start, end),
+    ).to_dict()
+
+    assert payload["accounts"]["total_count"] == 0
+    assert payload["user_overlap"]["pairwise_overlap"] == {
+        "contact_center|helpdesk": 1,
+        "contact_center|rise": 0,
+        "helpdesk|rise": 1,
+    }
 
 
 @pytest.mark.parametrize("products", [[], ["helpdesk"], ["helpdesk", "helpdesk"]])

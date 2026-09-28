@@ -44,9 +44,11 @@ def test_trial_outcomes_count_only_usage_before_first_terminal_transition(projec
     start = datetime(2026, 9, 1, tzinfo=UTC)
     end = start + timedelta(days=30)
     for account, terminal in (("convert", "active"), ("expire", "expired")):
-        trial_at = start + timedelta(days=1)
+        trial_at = start - timedelta(days=1) if account == "convert" else start + timedelta(days=1)
         terminal_at = start + timedelta(days=10)
         _identify(project, account=account, timestamp=trial_at, status="trial")
+        if account == "convert":
+            _usage(project, account=account, timestamp=trial_at + timedelta(hours=1))
         _usage(project, account=account, timestamp=trial_at + timedelta(days=1))
         _usage(project, account=account, timestamp=trial_at + timedelta(days=2))
         _usage(

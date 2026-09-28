@@ -245,6 +245,9 @@ def analyze_product_adoption(
         plan_results = {
             plan: {
                 "eligible_account_count": len(eligible_accounts),
+                "eligible_accounts": BoundedList.from_items(
+                    sorted(eligible_accounts), limit=limit
+                ).to_dict(),
                 "features": {
                     definition.key: {
                         "numerator": len(adopters_by_plan_feature[(plan, definition.key)]),
@@ -253,6 +256,10 @@ def analyze_product_adoption(
                             len(adopters_by_plan_feature[(plan, definition.key)]),
                             len(eligible_accounts),
                         ),
+                        "adopting_accounts": BoundedList.from_items(
+                            sorted(adopters_by_plan_feature[(plan, definition.key)]),
+                            limit=limit,
+                        ).to_dict(),
                     }
                     for definition in definitions
                 },

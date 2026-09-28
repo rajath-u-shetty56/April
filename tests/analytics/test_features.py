@@ -246,21 +246,45 @@ def test_plan_adoption_uses_entitlement_at_event_time_and_historical_denominator
     assert payload["plans"] == {
         "basic": {
             "eligible_account_count": 2,
+            "eligible_accounts": {
+                "items": ["basic-no-use", "switcher"],
+                "returned_count": 2,
+                "total_count": 2,
+                "truncated": False,
+            },
             "features": {
                 "call_transfer": {
                     "numerator": 1,
                     "denominator": 2,
                     "rate": 50.0,
+                    "adopting_accounts": {
+                        "items": ["switcher"],
+                        "returned_count": 1,
+                        "total_count": 1,
+                        "truncated": False,
+                    },
                 }
             },
         },
         "pro": {
             "eligible_account_count": 1,
+            "eligible_accounts": {
+                "items": ["switcher"],
+                "returned_count": 1,
+                "total_count": 1,
+                "truncated": False,
+            },
             "features": {
                 "call_transfer": {
                     "numerator": 1,
                     "denominator": 1,
                     "rate": 100.0,
+                    "adopting_accounts": {
+                        "items": ["switcher"],
+                        "returned_count": 1,
+                        "total_count": 1,
+                        "truncated": False,
+                    },
                 }
             },
         },

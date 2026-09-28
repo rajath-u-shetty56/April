@@ -87,7 +87,7 @@ def analyze_trial_outcomes(
             status_property=product_definition.status_property,
             statuses={trial.status},
         )
-        if trial_transition is None or trial_transition.timestamp < period.start:
+        if trial_transition is None:
             continue
         outcome = _first_transition(
             timeline.transitions,
@@ -96,12 +96,12 @@ def analyze_trial_outcomes(
             status_property=product_definition.status_property,
             statuses={trial.conversion_status, trial.expiry_status},
         )
-        if outcome is None:
+        if outcome is None or outcome.timestamp <= period.start:
             continue
         timestamps = list(
             Event.objects.filter(
                 project=project,
-                timestamp__gte=trial_transition.timestamp,
+                timestamp__gte=max(trial_transition.timestamp, period.start),
                 timestamp__lt=outcome.timestamp,
                 groups__account=account,
                 properties__product=product,

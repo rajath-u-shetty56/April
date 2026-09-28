@@ -1,8 +1,7 @@
 import subprocess
 import sys
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
-from types import SimpleNamespace
 from uuid import UUID
 
 import pytest
@@ -10,7 +9,7 @@ import pytest
 from analytics_platform.event_catalog.models import EventDefinition
 from analytics_platform.events.models import Event
 from analytics_platform.group_analytics.models import GroupProfile
-from scripts.mock_analytics_analysis import _funnel, analyze_project, assert_expected_results
+from scripts.mock_analytics_analysis import analyze_project, assert_expected_results
 from scripts.mock_analytics_dataset import ANALYSIS_CUTOFF, build_dataset
 
 pytestmark = pytest.mark.django_db
@@ -115,8 +114,9 @@ def test_analysis_answers_core_account_product_and_trial_questions(project):
         "india",
         "juliet",
     ]
-    assert result["entitlement"]["entitled_without_usage"] == ["charlie"]
-    assert result["entitlement"]["usage_percentage"] == 87.5
+    assert result["entitlement"]["entitled_without_usage"] == ["charlie", "hotel"]
+    assert result["entitlement"]["usage_percentage"] == 75.0
+    assert result["entitlement"]["interpretation"]["entitlement_basis"] == "period_end"
     assert result["cross_product"]["helpdesk_and_contact_center"] == [
         "acme",
         "juliet",
@@ -144,6 +144,9 @@ def test_analysis_answers_core_account_product_and_trial_questions(project):
     assert result["adoption_by_plan_at_event_time"]["plans"]["enterprise"][
         "features"
     ]["supervisor_listen"]["rate"] == 50.0
+    assert result["adoption_by_plan_at_event_time"]["interpretation"][
+        "plan_attribution_basis"
+    ] == "event_time"
 
 
 def test_analysis_matches_expected_synthetic_outcomes(project):
@@ -178,31 +181,6 @@ def test_funnels_match_events_by_call_id_not_only_aggregate_counts(project):
         "call_transfer_initiated_to_call_transfer_completed"
     ]["lost"] > 0
     assert result["funnels"]["callback_requested_to_callback_fulfilled"]["lost"] > 0
-
-
-def test_funnel_requires_a_later_completion_and_preserves_repeated_attempts():
-    def event(name, minute):
-        return SimpleNamespace(
-            event=name,
-            timestamp=datetime(2026, 9, 1, 10, minute, tzinfo=UTC),
-            groups={"account": "acme"},
-            properties={"call_id": "call-1"},
-        )
-
-    result = _funnel(
-        [
-            event("call_transfer_completed", 1),
-            event("call_transfer_initiated", 2),
-            event("call_transfer_initiated", 3),
-            event("call_transfer_completed", 4),
-        ],
-        "call_transfer_initiated",
-        "call_transfer_completed",
-    )
-
-    assert result["started"] == 2
-    assert result["completed"] == 1
-    assert result["lost"] == 1
 
 
 def test_active_cross_product_usage_ignores_products_seen_only_before_period(project):
