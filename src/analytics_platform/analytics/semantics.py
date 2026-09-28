@@ -13,8 +13,14 @@ class EventPredicate:
     properties_equal: Mapping[str, object] = MappingProxyType({})
 
     def matches(self, event_name: str, properties: Mapping[str, object]) -> bool:
+        def matches_value(actual: object, expected: object) -> bool:
+            if isinstance(expected, bool):
+                return type(actual) is bool and actual is expected
+            return actual == expected
+
         return event_name == self.event and all(
-            properties.get(key) == value for key, value in self.properties_equal.items()
+            matches_value(properties.get(key), value)
+            for key, value in self.properties_equal.items()
         )
 
 

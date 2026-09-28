@@ -2,6 +2,7 @@ import importlib
 from uuid import uuid4
 
 import pytest
+from django.db import OperationalError
 
 from analytics_platform.catalog.models import Project, Workspace
 from scripts import run_analytics_mcp
@@ -61,3 +62,22 @@ def test_main_reports_sanitized_startup_failure_to_stderr(capsys):
     assert result == 2
     assert captured.out == ""
     assert captured.err == "Analytics MCP startup failed: ANALYTICS_PROJECT_ID is required\n"
+
+
+def test_main_sanitizes_unexpected_database_failure(monkeypatch, capsys):
+    def fail(_environment):
+        raise OperationalError("password=fake-secret")
+
+    monkeypatch.setattr(run_analytics_mcp, "resolve_project_id", fail)
+
+    result = run_analytics_mcp.main(
+        {"ANALYTICS_PROJECT_ID": "00000000-0000-0000-0000-000000000000"},
+        run_protocol=False,
+    )
+
+    captured = capsys.readouterr()
+    assert result == 2
+    assert captured.out == ""
+    assert captured.err == "Analytics MCP startup failed: unexpected startup error\n"
+    assert "fake-secret" not in captured.err
+    assert "Traceback" not in captured.err

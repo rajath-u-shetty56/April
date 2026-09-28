@@ -182,6 +182,12 @@ async def test_mcp_answers_validation_questions_with_scoped_aggregate_evidence(
 
     assert adoption["interpretation"]["entitlement_basis"] == "period_end"
     assert adoption["interpretation"]["plan_attribution_basis"] == "event_time"
+    assert adoption["overall"]["period_end_entitled_adoption"] == {
+        "numerator": 6,
+        "denominator": 8,
+        "rate": 75.0,
+    }
+    assert adoption["overall"]["entitled_without_usage"]["items"] == ["charlie", "hotel"]
     assert adoption["features"]["supervisor_listen"]["high_adoption_low_depth"] is True
     assert adoption["plans"]["pro"]["features"]["supervisor_listen"]["rate"] == 75.0
     acme_users = next(item for item in users["accounts"]["items"] if item["account_key"] == "acme")

@@ -55,6 +55,7 @@ class AdoptionResult:
     period: TimeRange
     product: str
     interpretation: Interpretation
+    overall: dict[str, object]
     features: dict[str, dict[str, object]]
     plans: dict[str, dict[str, object]] | None
 
@@ -64,6 +65,7 @@ class AdoptionResult:
             "period": self.period.as_dict(),
             "interpretation": self.interpretation.to_dict(),
             "product": self.product,
+            "overall": self.overall,
             "features": self.features,
         }
         if self.plans is not None:
@@ -185,6 +187,18 @@ def analyze_product_adoption(
         if timeline.state_at(period.end, inclusive=False).get(product_definition.status_property)
         in product_definition.entitled_statuses
     }
+    observed_accounts = {
+        account
+        for groups in Event.objects.filter(
+            project=project,
+            timestamp__gte=period.start,
+            timestamp__lt=period.end,
+            properties__product=product,
+        ).values_list("groups", flat=True)
+        if isinstance((account := groups.get("account")), str)
+    }
+    entitled_observed = entitled_at_end & observed_accounts
+    entitled_without_usage = entitled_at_end - observed_accounts
     accounts_by_feature: dict[str, set[str]] = defaultdict(set)
     event_counts = Counter[str]()
     account_counts = Counter[tuple[str, str]]()
@@ -269,6 +283,23 @@ def analyze_product_adoption(
             plan_attribution_basis="event_time" if include_plan_breakdown else None,
             historical_profile_reliability=HISTORICAL_PROFILE_RELIABILITY,
         ),
+        overall={
+            "observed_account_count": len(observed_accounts),
+            "observed_accounts": BoundedList.from_items(
+                sorted(observed_accounts), limit=limit
+            ).to_dict(),
+            "period_end_entitled_accounts": BoundedList.from_items(
+                sorted(entitled_at_end), limit=limit
+            ).to_dict(),
+            "period_end_entitled_adoption": {
+                "numerator": len(entitled_observed),
+                "denominator": len(entitled_at_end),
+                "rate": _rate(len(entitled_observed), len(entitled_at_end)),
+            },
+            "entitled_without_usage": BoundedList.from_items(
+                sorted(entitled_without_usage), limit=limit
+            ).to_dict(),
+        },
         features=feature_results,
         plans=plan_results,
     )

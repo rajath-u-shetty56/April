@@ -75,6 +75,7 @@ class AdoptionOutput(OutputModel):
     period: TimeRangeOutput
     interpretation: InterpretationOutput
     product: str
+    overall: dict[str, Any]
     features: dict[str, dict[str, Any]]
     plans: dict[str, dict[str, Any]] | None = None
 

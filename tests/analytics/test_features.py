@@ -185,6 +185,57 @@ def test_overall_adoption_uses_entitlement_immediately_before_period_end(project
     assert listen["adopting_accounts"]["truncated"] is True
 
 
+def test_overall_product_adoption_counts_lifecycle_usage_and_entitled_nonusers(project):
+    start = datetime(2026, 9, 1, tzinfo=UTC)
+    end = start + timedelta(days=30)
+    for account in ("lifecycle-user", "no-use"):
+        _identify(
+            project,
+            account=account,
+            timestamp=start - timedelta(days=1),
+            status="active",
+            plan="pro",
+        )
+    _event(
+        project,
+        account="lifecycle-user",
+        actor="private:lifecycle",
+        name="call_connected",
+        timestamp=start + timedelta(days=1),
+    )
+
+    payload = analyze_product_adoption(
+        project, "contact_center", TimeRange.create(start, end), account_limit=1
+    ).to_dict()
+
+    assert payload["overall"] == {
+        "observed_account_count": 1,
+        "observed_accounts": {
+            "items": ["lifecycle-user"],
+            "returned_count": 1,
+            "total_count": 1,
+            "truncated": False,
+        },
+        "period_end_entitled_accounts": {
+            "items": ["lifecycle-user"],
+            "returned_count": 1,
+            "total_count": 2,
+            "truncated": True,
+        },
+        "period_end_entitled_adoption": {
+            "numerator": 1,
+            "denominator": 2,
+            "rate": 50.0,
+        },
+        "entitled_without_usage": {
+            "items": ["no-use"],
+            "returned_count": 1,
+            "total_count": 1,
+            "truncated": False,
+        },
+    }
+
+
 def test_plan_adoption_uses_entitlement_at_event_time_and_historical_denominators(project):
     start = datetime(2026, 9, 1, tzinfo=UTC)
     middle = start + timedelta(days=10)

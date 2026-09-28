@@ -55,6 +55,16 @@ def test_entitlement_trials_and_shared_identity_are_deterministic():
 
 
 @pytest.mark.parametrize(
+    ("value", "matches"),
+    [(True, True), (False, False), (1, False), (1.0, False), ("true", False)],
+)
+def test_boolean_feature_predicates_require_an_actual_boolean(value, matches):
+    predicate = SEMANTICS.get_feature("contact_center", "ai_summary").predicate
+
+    assert predicate.matches("call_summary_generated", {"success": value}) is matches
+
+
+@pytest.mark.parametrize(
     ("method", "arguments"),
     [
         ("get_product", ("unknown",)),

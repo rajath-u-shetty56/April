@@ -80,50 +80,48 @@ def analyze_trial_outcomes(
     expiries: list[dict[str, object]] = []
 
     for account, timeline in sorted(load_profile_timelines(project).items()):
-        trial_transition = _first_transition(
-            timeline.transitions,
-            after=None,
-            before=period.end,
-            status_property=product_definition.status_property,
-            statuses={trial.status},
-        )
-        if trial_transition is None:
-            continue
-        outcome = _first_transition(
-            timeline.transitions,
-            after=trial_transition.timestamp,
-            before=period.end,
-            status_property=product_definition.status_property,
-            statuses={trial.conversion_status, trial.expiry_status},
-        )
-        if outcome is None or outcome.timestamp <= period.start:
-            continue
-        timestamps = list(
-            Event.objects.filter(
-                project=project,
-                timestamp__gte=max(trial_transition.timestamp, period.start),
-                timestamp__lt=outcome.timestamp,
-                groups__account=account,
-                properties__product=product,
+        previous_status = None
+        for trial_transition in timeline.transitions:
+            status = trial_transition.properties.get(product_definition.status_property)
+            is_trial_start = status == trial.status and previous_status != trial.status
+            previous_status = status
+            if not is_trial_start or trial_transition.timestamp >= period.end:
+                continue
+            outcome = _first_transition(
+                timeline.transitions,
+                after=trial_transition.timestamp,
+                before=period.end,
+                status_property=product_definition.status_property,
+                statuses={trial.conversion_status, trial.expiry_status},
             )
-            .order_by("timestamp", "uuid")
-            .values_list("timestamp", flat=True)
-        )
-        if not timestamps:
-            continue
-        evidence = {
-            "account_key": account,
-            "trial_started_at": _iso(trial_transition.timestamp),
-            "outcome_at": _iso(outcome.timestamp),
-            "first_usage_at": _iso(timestamps[0]),
-            "last_usage_at": _iso(timestamps[-1]),
-            "event_count": len(timestamps),
-        }
-        outcome_status = outcome.properties.get(product_definition.status_property)
-        if outcome_status == trial.conversion_status:
-            conversions.append(evidence)
-        elif outcome_status == trial.expiry_status:
-            expiries.append(evidence)
+            if outcome is None or outcome.timestamp <= period.start:
+                continue
+            timestamps = list(
+                Event.objects.filter(
+                    project=project,
+                    timestamp__gte=max(trial_transition.timestamp, period.start),
+                    timestamp__lt=outcome.timestamp,
+                    groups__account=account,
+                    properties__product=product,
+                )
+                .order_by("timestamp", "uuid")
+                .values_list("timestamp", flat=True)
+            )
+            if not timestamps:
+                continue
+            evidence = {
+                "account_key": account,
+                "trial_started_at": _iso(trial_transition.timestamp),
+                "outcome_at": _iso(outcome.timestamp),
+                "first_usage_at": _iso(timestamps[0]),
+                "last_usage_at": _iso(timestamps[-1]),
+                "event_count": len(timestamps),
+            }
+            outcome_status = outcome.properties.get(product_definition.status_property)
+            if outcome_status == trial.conversion_status:
+                conversions.append(evidence)
+            elif outcome_status == trial.expiry_status:
+                expiries.append(evidence)
 
     return TrialOutcomeResult(
         scope=Scope(project.pk),

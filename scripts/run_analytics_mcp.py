@@ -71,6 +71,9 @@ def main(
     except StartupConfigurationError as exc:
         _log_startup_error(str(exc))
         return 2
+    except Exception:
+        _log_startup_error("unexpected startup error")
+        return 2
     if run_protocol:
         from analytics_platform.mcp_adapter.server import create_server
 

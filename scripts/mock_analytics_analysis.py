@@ -25,10 +25,7 @@ def _items(result: dict) -> list:
 
 def analyze_project(project, *, cutoff=ANALYSIS_CUTOFF) -> dict:
     """Adapt reusable analytics service results to the legacy validation payload."""
-    from analytics_platform.analytics.accounts import (
-        find_cross_product_accounts,
-        summarize_account_activity,
-    )
+    from analytics_platform.analytics.accounts import find_cross_product_accounts
     from analytics_platform.analytics.catalog import describe_project
     from analytics_platform.analytics.change import analyze_account_change
     from analytics_platform.analytics.contracts import TimeRange
@@ -86,17 +83,9 @@ def analyze_project(project, *, cutoff=ANALYSIS_CUTOFF) -> dict:
         }
 
     product = SEMANTICS.get_product("contact_center")
-    entitled_accounts = sorted(
-        account
-        for account, timeline in timelines.items()
-        if timeline.state_at(cutoff, inclusive=False).get(product.status_property)
-        in product.entitled_statuses
-    )
-    observed_accounts = []
-    for account in sorted(timelines):
-        activity = summarize_account_activity(project, account, current_period).to_dict()
-        if "contact_center" in activity["active_products"]:
-            observed_accounts.append(account)
+    overall_adoption = adoption_result["overall"]
+    entitled_accounts = _items(overall_adoption["period_end_entitled_accounts"])
+    observed_accounts = _items(overall_adoption["observed_accounts"])
 
     cross_two = find_cross_product_accounts(
         project, ["helpdesk", "contact_center"], current_period, limit=200
@@ -151,9 +140,6 @@ def analyze_project(project, *, cutoff=ANALYSIS_CUTOFF) -> dict:
         for account in _items(usage["accounts"]):
             distinct_users.setdefault(account["account_key"], {})[product_key] = account["features"]
 
-    entitled_set = set(entitled_accounts)
-    observed_set = set(observed_accounts)
-    denominator = len(entitled_set)
     return {
         "scope": {
             "project_id": str(project.pk),
@@ -186,12 +172,8 @@ def analyze_project(project, *, cutoff=ANALYSIS_CUTOFF) -> dict:
             "interpretation": adoption_result["interpretation"],
             "current_entitled_accounts": entitled_accounts,
             "observed_usage_accounts": observed_accounts,
-            "entitled_without_usage": sorted(entitled_set - observed_set),
-            "usage_percentage": (
-                round(len(entitled_set & observed_set) * 100 / denominator, 2)
-                if denominator
-                else 0.0
-            ),
+            "entitled_without_usage": _items(overall_adoption["entitled_without_usage"]),
+            "usage_percentage": overall_adoption["period_end_entitled_adoption"]["rate"],
         },
         "funnels": funnels,
         "cross_product": {

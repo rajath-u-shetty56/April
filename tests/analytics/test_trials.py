@@ -87,3 +87,19 @@ def test_trial_outcomes_count_only_usage_before_first_terminal_transition(projec
     assert conversion["outcome_at"] == "2026-09-11T00:00:00Z"
     assert expiry["account_key"] == "expire"
     assert expiry["event_count"] == 2
+
+
+def test_trial_outcomes_include_a_retrial_after_an_earlier_expiry(project):
+    start = datetime(2026, 9, 1, tzinfo=UTC)
+    end = start + timedelta(days=30)
+    _identify(project, account="retry", timestamp=start - timedelta(days=20), status="trial")
+    _identify(project, account="retry", timestamp=start - timedelta(days=10), status="expired")
+    _identify(project, account="retry", timestamp=start + timedelta(days=1), status="trial")
+    _usage(project, account="retry", timestamp=start + timedelta(days=2))
+    _identify(project, account="retry", timestamp=start + timedelta(days=3), status="active")
+
+    payload = analyze_trial_outcomes(
+        project, "contact_center", TimeRange.create(start, end)
+    ).to_dict()
+
+    assert [item["account_key"] for item in payload["used_before_conversion"]["items"]] == ["retry"]
