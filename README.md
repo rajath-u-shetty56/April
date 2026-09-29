@@ -73,6 +73,45 @@ effective at its timestamp. Synthetic user identifiers are scoped by user store 
 Helpdesk, Contact Center, and Rise share the Helpdesk user namespace, while BI keeps its separate
 user namespace because no verified cross-product user mapping exists.
 
+### PostHog parity dataset
+
+The PostHog adapter imports the same `build_dataset()` function as the April producer. It does not
+generate a second dataset. Start with its offline modes; neither contacts PostHog or requires a
+token:
+
+```bash
+uv run python scripts/posthog_mock_analytics_dataset.py --describe
+uv run python scripts/posthog_mock_analytics_dataset.py --dry-run
+```
+
+`--describe` prints counts, timestamp bounds, product and event-name breakdowns, account count, and
+a SHA-256 fingerprint of the canonical source dataset. `--dry-run` also translates and validates
+all events, then prints three sanitized samples. Behavioral `groups.account` values become the
+PostHog `$groups.account` property; group profile events retain `$group_type`, `$group_key`, and
+`$group_set`.
+
+Sending requires both an explicit mode and the dedicated PostHog project's public capture token:
+
+```bash
+export POSTHOG_PROJECT_TOKEN='<project capture token>'
+export POSTHOG_HOST='https://us.i.posthog.com'  # EU Cloud or a self-hosted origin also works
+export POSTHOG_TIMEOUT_SECONDS=30
+uv run python scripts/posthog_mock_analytics_dataset.py --send
+```
+
+The token is placed only in the JSON request body, never in output, exception text, or a URL. The
+adapter uses PostHog's public `/batch/` capture endpoint with bounded batches, transient-failure
+retries, and profile events sent before behavioral events. This synchronous HTTP path is deliberate:
+the official Python SDK queues events locally and documents that shutdown does not guarantee server
+receipt, whereas this validation utility needs to surface batch HTTP failures. A successful run
+means PostHog's capture service acknowledged every batch; it is not an immediate transactional
+commit or a guarantee that events are already queryable. Repeated sends reuse identical UUIDs, but
+PostHog deduplication and query availability can be eventual.
+
+The mapping follows PostHog's official [event](https://posthog.com/docs/data/events) and
+[group analytics](https://posthog.com/docs/product-analytics/group-analytics) contracts. Use a
+dedicated PostHog project so parity queries are not mixed with unrelated events.
+
 ## Local analytics MCP
 
 Set `ANALYTICS_PROJECT_ID` to the one project the process may query, then start the stdio server:

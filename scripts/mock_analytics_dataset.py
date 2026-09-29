@@ -419,6 +419,26 @@ def build_dataset() -> SyntheticDataset:
             call_id="hotel-w3-c1",
         )
     )
+    evolved_ticket_properties = {
+        "acme": {"channel": "email", "priority": "high", "requester_type": "contact"},
+        "charlie": {"channel": "portal", "priority": "normal", "requester_type": "contact"},
+        "juliet": {"channel": "email", "priority": "urgent", "requester_type": "agent"},
+    }
+    for sequence, (account, properties) in enumerate(evolved_ticket_properties.items()):
+        events.append(
+            _behavior(
+                account,
+                "helpdesk",
+                "ticket_created",
+                10,
+                sequence,
+                1,
+                f"{account}-schema-v2-ticket",
+                ticket_id=f"{account}-schema-v2-ticket",
+                version=2,
+                **properties,
+            )
+        )
     events.sort(key=lambda event: (event["timestamp"], event["uuid"]))
     return SyntheticDataset(tuple(profiles), tuple(events))
 

@@ -163,7 +163,7 @@ async def test_mcp_answers_validation_questions_with_scoped_aggregate_evidence(
         )
 
     assert catalog["counts"] == {
-        "events": 3524,
+        "events": 3527,
         "group_profiles": 10,
         "event_definitions": 24,
     }

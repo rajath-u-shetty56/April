@@ -6,7 +6,7 @@ from scripts.mock_analytics_dataset import (
 )
 
 
-def test_dataset_is_deterministic_and_covers_ten_weeks():
+def test_dataset_is_deterministic_and_includes_the_schema_evolution_period():
     first = build_dataset()
     second = build_dataset()
 
@@ -15,7 +15,7 @@ def test_dataset_is_deterministic_and_covers_ten_weeks():
     assert len(first.profile_events) == 13
     timestamps = [event["timestamp"] for event in first.behavioral_events]
     assert min(timestamps) == "2026-07-06T09:00:00Z"
-    assert max(timestamps) < ANALYSIS_CUTOFF.isoformat().replace("+00:00", "Z")
+    assert max(timestamps) == "2026-09-14T09:02:00Z"
 
 
 def test_behavioral_events_follow_product_and_account_identity_conventions():
@@ -48,6 +48,40 @@ def test_behavioral_events_follow_product_and_account_identity_conventions():
         )
         assert event["timestamp"].endswith("Z")
         assert event["uuid"]
+
+
+def test_ticket_created_schema_evolves_without_rewriting_historical_events():
+    ticket_created = [
+        event
+        for event in build_dataset().behavioral_events
+        if event["event"] == "ticket_created"
+        and event["properties"]["product"] == "helpdesk"
+    ]
+    version_one = [event for event in ticket_created if event["properties"]["version"] == 1]
+    version_two = [event for event in ticket_created if event["properties"]["version"] == 2]
+
+    assert len(version_one) == 250
+    assert len(version_two) == 3
+    assert max(event["timestamp"] for event in version_one) < min(
+        event["timestamp"] for event in version_two
+    )
+    assert all(
+        not {"channel", "priority", "requester_type"} & event["properties"].keys()
+        for event in version_one
+    )
+    assert {
+        (
+            event["groups"]["account"],
+            event["properties"]["channel"],
+            event["properties"]["priority"],
+            event["properties"]["requester_type"],
+        )
+        for event in version_two
+    } == {
+        ("acme", "email", "high", "contact"),
+        ("charlie", "portal", "normal", "contact"),
+        ("juliet", "email", "urgent", "agent"),
+    }
 
 
 def test_products_using_the_helpdesk_user_store_share_user_identity():

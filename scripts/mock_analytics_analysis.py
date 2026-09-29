@@ -215,8 +215,8 @@ def assert_expected_results(result: dict) -> list[str]:
         if actual != expected:
             failures.append(f"{label}: expected {expected!r}, got {actual!r}")
 
-    expect("event count", result["validation"]["event_count"], 3524)
-    expect("behavioral event count", result["validation"]["behavioral_event_count"], 3511)
+    expect("event count", result["validation"]["event_count"], 3527)
+    expect("behavioral event count", result["validation"]["behavioral_event_count"], 3514)
     expect("groupidentify count", result["validation"]["groupidentify_count"], 13)
     expect("group profile count", result["validation"]["group_profile_count"], 10)
     expect(
