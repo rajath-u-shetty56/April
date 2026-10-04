@@ -1,147 +1,238 @@
-# Multi-Product Analytics
+# April — Multi-Product Analytics
 
-An internal product analytics platform for collecting business events across multiple products and making them available to analytics and AI interfaces.
+April is an internal product analytics prototype for collecting business events from multiple
+products and making that data available through deterministic analytics queries and an AI/MCP
+interface.
 
-The repository contains the catalog foundation, synchronous PostgreSQL event ingestion, reusable
-analytics queries, and a local read-only MCP server.
+The current implementation includes:
 
-## Current structure
+- Django and PostgreSQL application setup;
+- workspace and project data boundaries;
+- project-scoped ingestion credentials;
+- single-event and bulk ingestion endpoints;
+- immutable event storage and UUID-based deduplication;
+- flexible event properties;
+- event, event-property, group-profile, and group-property catalogs;
+- generic event, adoption, funnel, transition, and comparison queries;
+- a local read-only MCP server; and
+- one deterministic dataset that can be loaded into both April and PostHog.
+
+April does not currently provide an analytics dashboard. The validation interface is the local MCP,
+the analysis script, or direct inspection of PostgreSQL.
+
+## Repository structure
 
 ```text
 src/analytics_platform/
 ├── catalog/         # Workspaces and projects
-├── event_catalog/   # Event names and per-event property definitions
-├── events/          # Persisted event occurrences
-├── group_analytics/ # Group profiles and project/group-type property definitions
-├── ingestion/       # Credentials, capture, bulk, validation and deduplication
-├── analytics/       # Deterministic read-only analytics services and semantics
-├── mcp_adapter/     # Typed local MCP tools
-└── common/          # Shared model behavior
+├── event_catalog/   # Event and event-property catalog entries
+├── events/          # Immutable event occurrences
+├── group_analytics/ # Current group profiles and group-property catalog entries
+├── ingestion/       # Credentials, validation, capture, bulk and deduplication
+├── analytics/       # Generic read-only analytics queries
+├── mcp_adapter/     # Typed MCP tools
+└── common/          # Shared model and property-catalog behavior
 ```
 
-See [architecture](docs/architecture.md), [data model](docs/data-model.md), and [event contract](docs/event-contract.md) for more context.
+For the design details, see:
 
-## Local setup
+- [Architecture](docs/architecture.md)
+- [Data model](docs/data-model.md)
+- [Event contract](docs/event-contract.md)
+- [Ingestion credential decision](docs/ingestion-credentials-decision.md)
+
+## Prerequisites
+
+Install the following before starting:
+
+- Git
+- Docker with Docker Compose
+- [uv](https://docs.astral.sh/uv/)
+- `curl`
+- Python 3.12–3.14; `uv` will create and manage the project environment
+
+PostHog is optional and is only needed for the parity comparison.
+
+## 1. Start April locally
+
+Clone the repository and install the Python dependencies:
 
 ```bash
+git clone <repository-url>
+cd april
 cp .env.example .env
 uv sync
-docker compose up -d postgres
+```
+
+Start PostgreSQL, wait for it to become healthy, and apply the migrations:
+
+```bash
+docker compose up -d --wait postgres
 uv run python manage.py migrate
+uv run python manage.py check
+```
+
+Start Django:
+
+```bash
 uv run python manage.py runserver
 ```
 
-The health endpoint is available at `http://localhost:8000/health/`.
-
-## Existing event property backfill
-
-Apply schema migrations first, then backfill events that were stored before observational property
-discovery was added. The command reads bounded batches and merges catalog observations idempotently:
+Verify the application from another terminal:
 
 ```bash
-uv run python manage.py migrate
-uv run python manage.py backfill_property_catalog \
-  --project-id '<project UUID>' --batch-size 500
+curl http://localhost:8000/health/
 ```
 
-The command orders and filters by `Event.id`, the Event database primary key. It reports the last
-processed primary key after every batch. To resume, pass that value as `--after-event-pk` and keep
-the same `--through-event-pk` high-water value from the original run. If no high-water value is
-provided, the command captures the largest Event primary key at startup. These cursors are not the
-producer event UUID. Re-running completed ranges is safe; observations merge types, nullability,
-and first/last timestamps without storing sample property values.
+Expected response:
 
-## Checks
-
-```bash
-uv run pytest
-uv run ruff check .
-uv run python manage.py makemigrations --check --dry-run
+```json
+{"status": "ok"}
 ```
 
-## Synthetic analytics validation
+## 2. Create a workspace, project, and ingestion credential
 
-The deterministic validation dataset exercises ten weeks of account-level activity across
-Helpdesk, Contact Center, Rise, and BI. Use a dedicated empty project and one of its ingestion
-credentials so the expected-result assertions are not mixed with unrelated events.
+The management APIs require a Django staff user. Create one and generate its local API token:
 
 ```bash
-export ANALYTICS_BASE_URL=http://localhost:8000
-export ANALYTICS_INGESTION_KEY='<project ingestion credential>'
-uv run python scripts/mock_analytics_dataset.py
+uv run python manage.py createsuperuser
+uv run python manage.py drf_create_token <username>
+export APRIL_ADMIN_TOKEN='<token returned by drf_create_token>'
+```
 
-# Run the same command again to verify every event is reported as a duplicate.
-uv run python scripts/mock_analytics_dataset.py
+Create a workspace:
 
+```bash
+curl --fail-with-body --request POST http://localhost:8000/api/v1/workspaces/ \
+  --header "Authorization: Token ${APRIL_ADMIN_TOKEN}" \
+  --header "Content-Type: application/json" \
+  --data '{"key":"happyfox","name":"HappyFox"}'
+```
+
+Copy the returned workspace `id`, then create a project:
+
+```bash
+export APRIL_WORKSPACE_ID='<workspace UUID>'
+
+curl --fail-with-body --request POST \
+  "http://localhost:8000/api/v1/workspaces/${APRIL_WORKSPACE_ID}/projects/" \
+  --header "Authorization: Token ${APRIL_ADMIN_TOKEN}" \
+  --header "Content-Type: application/json" \
+  --data '{"key":"main","name":"Main analytics"}'
+```
+
+Copy the returned project `id` and create a named ingestion credential:
+
+```bash
 export ANALYTICS_PROJECT_ID='<project UUID>'
+
+curl --fail-with-body --request POST \
+  "http://localhost:8000/api/v1/projects/${ANALYTICS_PROJECT_ID}/ingestion-credentials/" \
+  --header "Authorization: Token ${APRIL_ADMIN_TOKEN}" \
+  --header "Content-Type: application/json" \
+  --data '{"name":"mock-dataset-loader"}'
+```
+
+The response contains a `secret`. Save it when it is returned because April stores only its hash and
+cannot display the secret again. Ingestion credentials can later be rotated or revoked through the
+same staff API.
+
+```bash
+export ANALYTICS_INGESTION_KEY='<secret returned above>'
+export ANALYTICS_BASE_URL='http://localhost:8000'
+```
+
+Do not commit either the staff token or ingestion credential.
+
+## 3. Load and verify the mock dataset
+
+Inspect the deterministic dataset without sending anything:
+
+```bash
+uv run python scripts/mock_analytics_dataset.py --describe
+```
+
+Load it into the project created above:
+
+```bash
+uv run python scripts/mock_analytics_dataset.py
+```
+
+Expected counts:
+
+```text
+13 group-profile events
+3514 behavioral events
+3527 total events
+10 account group profiles
+24 event definitions
+```
+
+The successful ingestion response should report `3527` created events and no rejected events. The
+dataset uses deterministic UUIDs, so running the command again should report all events as
+duplicates rather than inserting another copy.
+
+Run the deterministic analytics validation:
+
+```bash
 uv run python scripts/mock_analytics_analysis.py
 ```
 
-The producer communicates only through `/api/v1/capture/` and `/api/v1/bulk/`. The analysis
-script reads the accepted PostgreSQL rows through Django, prints results for the validation
-questions, and exits nonzero when an expected scenario is missing. Historical plan and entitlement
-results are explicitly conditional on complete, correctly timestamped `$groupidentify` history;
-`GroupProfile` remains the source for current account state.
+A successful result contains:
 
-The analysis script exercises structured event queries, group activity rules, explicit eligibility,
-funnels, group state and transitions, and comparisons over the 30 days before the fixed cutoff.
-These are generic query examples over a synthetic dataset; callers supply event rules, group
-filters, dimensions, and aggregations. The sample user identifiers intentionally use separate
-product namespaces in some cases. Any overlap output compares exact `distinct_id` strings only;
-zero overlap does not establish that the underlying people are different, and no identity
-resolution is performed.
-
-### PostHog parity dataset
-
-The PostHog adapter imports the same `build_dataset()` function as the April producer. It does not
-generate a second dataset. Start with its offline modes; neither contacts PostHog or requires a
-token:
-
-```bash
-uv run python scripts/posthog_mock_analytics_dataset.py --describe
-uv run python scripts/posthog_mock_analytics_dataset.py --dry-run
+```json
+"assertion_failures": []
 ```
 
-`--describe` prints counts, timestamp bounds, product and event-name breakdowns, account count, and
-a SHA-256 fingerprint of the canonical source dataset. `--dry-run` also translates and validates
-all events, then prints three sanitized samples. Behavioral `groups.account` values become the
-PostHog `$groups.account` property; group profile events retain `$group_type`, `$group_key`, and
-`$group_set`.
+The dataset covers Helpdesk, Contact Center, BI, and Rise between July 5 and September 14, 2026.
+Its historical entitlement results depend on the included, correctly timestamped `$groupidentify`
+history.
 
-Sending requires both an explicit mode and the dedicated PostHog project's public capture token:
+## 4. Connect the local MCP
 
-```bash
-export POSTHOG_PROJECT_TOKEN='<project capture token>'
-export POSTHOG_HOST='https://us.i.posthog.com'  # EU Cloud or a self-hosted origin also works
-export POSTHOG_TIMEOUT_SECONDS=30
-uv run python scripts/posthog_mock_analytics_dataset.py --send
-```
+The MCP is read-only and fixed to one project at startup. It reads PostgreSQL directly, so
+PostgreSQL must remain running. Django's `runserver` process is not required after the dataset has
+been loaded.
 
-The token is placed only in the JSON request body, never in output, exception text, or a URL. The
-adapter uses PostHog's public `/batch/` capture endpoint with bounded batches, transient-failure
-retries, and profile events sent before behavioral events. This synchronous HTTP path is deliberate:
-the official Python SDK queues events locally and documents that shutdown does not guarantee server
-receipt, whereas this validation utility needs to surface batch HTTP failures. A successful run
-means PostHog's capture service acknowledged every batch; it is not an immediate transactional
-commit or a guarantee that events are already queryable. Repeated sends reuse identical UUIDs, but
-PostHog deduplication and query availability can be eventual.
-
-The mapping follows PostHog's official [event](https://posthog.com/docs/data/events) and
-[group analytics](https://posthog.com/docs/product-analytics/group-analytics) contracts. Use a
-dedicated PostHog project so parity queries are not mixed with unrelated events.
-
-## Local analytics MCP
-
-Set `ANALYTICS_PROJECT_ID` to the one project the process may query, then start the stdio server:
+Find the absolute paths required by desktop MCP clients:
 
 ```bash
-export ANALYTICS_PROJECT_ID='<project UUID>'
-uv run python scripts/run_analytics_mcp.py
+command -v uv
+pwd
 ```
 
-The project is fixed and validated at startup. Tool arguments cannot select another project, and
-every response includes the resolved project UUID as scope evidence. The server exposes these eight
-read-only tools:
+For Cursor, add a server to the project-level `.cursor/mcp.json` or the user-level
+`~/.cursor/mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "april": {
+      "command": "/absolute/path/to/uv",
+      "args": [
+        "--directory",
+        "/absolute/path/to/april",
+        "run",
+        "python",
+        "scripts/run_analytics_mcp.py"
+      ],
+      "env": {
+        "ANALYTICS_PROJECT_ID": "<project UUID>"
+      }
+    }
+  }
+}
+```
+
+Use absolute paths because desktop applications may not inherit the shell's `PATH`. Reload the MCP
+server or restart the client after changing its configuration.
+
+A useful first verification prompt is:
+
+> Use `discover_analytics_catalog` and summarize the available products, events, event properties,
+> and group properties. Do not infer information that is not returned by the tool.
+
+The MCP exposes these generic tools:
 
 - `discover_analytics_catalog`
 - `query_events`
@@ -152,97 +243,126 @@ read-only tools:
 - `analyze_group_transitions`
 - `compare_group_activity`
 
-The previous tools map to the structured surface as follows:
+Tool date ranges require timezone-aware timestamps and use an inclusive start and exclusive end.
+The MCP accepts structured analytics arguments only; it does not expose arbitrary SQL, raw user-ID
+exports, write operations, or a runtime project selector.
 
-| Previous tool | Replacement |
-| --- | --- |
-| `describe_project` | `discover_analytics_catalog` |
-| `get_account_profile` | `analyze_group_state` with an optional `group_key` |
-| `summarize_account_activity` | `query_events` or `query_group_activity` |
-| `find_cross_product_accounts` | `query_group_activity` with labeled rules and explicit `match` |
-| `analyze_product_adoption`, `count_feature_users` | `analyze_group_adoption` with explicit eligibility, or `query_events` for event counts |
-| `analyze_funnel` | `analyze_group_funnel` with caller-defined ordered event steps |
-| `analyze_account_change`, `analyze_trial_outcomes` | Structured event queries, group transitions, or adoption inputs; no domain-specific result contract remains |
+## 5. Load the same dataset into PostHog
 
-Date ranges require timezone-aware timestamps and use an inclusive start and exclusive end,
-normalized to UTC. Bounded results report `returned_count`, `total_count`, and `truncated`; aggregate
-totals use the full matching population. `analyze_group_state` always requires an explicit
-`state_basis`: `current`, `period_start`, `period_end`, or `event_time`. Omitting `group_key` returns
-a bounded list of matching groups; supplying it selects one group. Historical property state is
-reconstructed from `$groupidentify` event history and is conditional on complete,
-correctly timestamped history.
+Create a dedicated empty PostHog project. Use its public project capture token—not a personal API
+key—and select the ingestion host for its region.
 
-Event properties are scoped to one event definition, and group properties are scoped to project and
-group type. Ingestion accepts flexible property JSON and records observed non-null types and
-nullability separately. A conflict means multiple incompatible non-null types were observed. Visible
-and verified definitions appear in discovery and can be queried explicitly; hidden definitions are
-omitted from discovery and rejected by explicit property queries. Catalog responses contain no
-sample values.
+First inspect and validate the translated payload locally:
 
-Event and product filters must resolve to visible or verified event definitions; unknown selectors
-are errors. An event-property query requires an event name, while product may be omitted to query the
-matching definitions across products. Such queries return per-definition base, present (including
-JSON null), explicit-null, missing, and matched counts. Property dimensions distinguish concrete
-scalar values, explicit `null`, and missing keys; nested objects and arrays cannot be grouping keys.
-Reserved profile-update events are excluded from general event queries. Query windows are limited
-to 366 days, `in` and `not_in` filters to 100 values, and comparison periods must have equal
-duration. A missing comparison group uses zero for counts and sums, but `null` for averages, minima,
-and maxima.
+```bash
+uv run python scripts/posthog_mock_analytics_dataset.py --describe
+uv run python scripts/posthog_mock_analytics_dataset.py --dry-run
+```
 
-`query_group_activity` accepts multiple labeled event rules and requires `match=all` or `match=any`.
-Its optional overlap compares exact identifier strings and never resolves identities. Adoption
-requires caller-supplied eligibility filters and a selected `state_basis`, so a denominator is never
-inferred. For event-time eligibility, the denominator includes each group that matched the filters
-at any point in the period, while the numerator counts matching activity only when the group was
-eligible. Adoption also reports total and median event depth per adopting group. Funnels correlate
-ordered steps by group key, exact `distinct_id`, or a shared observed string or number property such
-as `call_id`. Each step requires a distinct later event occurrence, and raw correlation values are
-not returned. Funnel `state_basis` is required only when group-profile filters are supplied.
-`query_events` supports an optional second
-equal-length period; `compare_group_activity` compares the same structured group activity rules
-across two equal-length periods through the shared comparison service. Funnels, transitions,
-dimensions, and aggregations are expressed as structured inputs. No tool accepts SQL or defines
-custom metrics.
+The expected source fingerprint is:
 
-`ANALYTICS_QUERY_TIMEOUT_MS` sets a transaction-local PostgreSQL statement timeout around analytics
-MCP query execution. It does not configure a global database timeout and does not affect ingestion,
-migrations, admin operations, or the property backfill command.
+```text
+e58716ba6e38e497d5b04d8de06e5a2c473d31bb6f7bdbb2a1422b3ea82f50ed
+```
 
-`ANALYTICS_MAX_RESPONSE_BYTES` limits every serialized MCP result and defaults to 1 MiB. Historical
-group reconstruction rejects more than 100,000 matching `$groupidentify` events, and an unscoped
-current-state query rejects more than 20,000 groups. Oversized work fails explicitly instead of
-returning partial analytics.
+Send the dataset once:
 
-This MCP server supports local stdio only. Its stdout is reserved for protocol messages, so launch
-it from an MCP client rather than treating its output as a human-readable CLI. Diagnostics go to
-stderr. It provides no arbitrary SQL, raw user-identifier export, write operations, HTTP transport,
-or runtime project selector.
+```bash
+export POSTHOG_PROJECT_TOKEN='<PostHog project capture token>'
+export POSTHOG_HOST='https://us.i.posthog.com' # Use the EU origin for an EU project
+export POSTHOG_TIMEOUT_SECONDS=30
 
-## API
+uv run python scripts/posthog_mock_analytics_dataset.py --send
+unset POSTHOG_PROJECT_TOKEN
+```
 
-The staff-only management API is mounted under `/api/v1/`:
+PostHog acknowledges ingestion before every event is necessarily available to queries. Allow a few
+minutes for its event and property catalogs to update.
+
+When building an insight, select a custom date range covering July 5 through September 14, 2026.
+PostHog's default recent-date range will not include this fixed dataset.
+
+April's `groups.account` association is translated to PostHog's `$groups.account`. It is not copied
+into a normal event property named `account`. PostHog's group-level UI requires Group Analytics. For
+this mock dataset only, `synthetic_scenario = acme` selects the same Acme event population when Group
+Analytics is unavailable.
+
+Use a dedicated PostHog project and avoid repeated sends. The translated events reuse deterministic
+UUIDs, but PostHog deduplication and query availability can be eventual.
+
+## 6. Run the project checks
+
+PostgreSQL must be running because the test suite creates a PostgreSQL test database.
+
+```bash
+uv run ruff check .
+uv run python manage.py check
+uv run python manage.py makemigrations --check --dry-run
+uv run pytest
+```
+
+The current suite contains 234 tests.
+
+## API summary
+
+Staff management endpoints:
 
 - `GET/POST /api/v1/workspaces/`
 - `GET/POST /api/v1/workspaces/{workspace_id}/projects/`
 - `GET/POST /api/v1/projects/{project_id}/event-definitions/`
 - `GET/PATCH /api/v1/projects/{project_id}/event-definitions/{definition_id}/`
-
 - `GET/POST /api/v1/projects/{project_id}/ingestion-credentials/`
 - `POST /api/v1/projects/{project_id}/ingestion-credentials/{credential_id}/rotate/`
 - `POST /api/v1/projects/{project_id}/ingestion-credentials/{credential_id}/revoke/`
 
-Producers use project ingestion credentials as `Authorization: Bearer <ingestion-key>`:
+Producer endpoints use `Authorization: Bearer <ingestion credential>`:
 
-- `POST /api/v1/capture/` — one event, committed before acceptance;
-- `POST /api/v1/bulk/` — independently committed items with ordered acceptance/rejection results.
+- `POST /api/v1/capture/` — ingest one event;
+- `POST /api/v1/bulk/` — ingest multiple independently committed events.
 
-Create a named credential through the staff API and store its returned `secret`:
-it is only disclosed on creation or rotation. Rotation permits an overlap period;
-explicitly revoke the old credential after migrating the producer.
+See the [event contract](docs/event-contract.md) for request examples, validation limits, retries,
+deduplication, and error codes.
 
-See the [event contract](docs/event-contract.md) for payloads, retry semantics,
-limits, and error codes, and [architecture](docs/architecture.md) for transaction
-and operational monitoring details. The test suite requires PostgreSQL (including
-real concurrent ingestion tests) and a database role allowed to create test databases.
+## Existing-data property backfill
 
-Testing, staging, and production are separate deployments with separate databases and credentials. Each deployment can use the same logical workspace and project keys, such as `happyfox/main`.
+Fresh projects do not need this command. After applying the current migrations to a database that
+already contains events, populate the event and group property catalogs with:
+
+```bash
+uv run python manage.py backfill_property_catalog \
+  --project-id '<project UUID>' \
+  --batch-size 500
+```
+
+The command is bounded and idempotent. Use `--after-event-pk` and the original
+`--through-event-pk` high-water value to resume an interrupted run.
+
+## Resetting the local environment
+
+Stop the containers while retaining PostgreSQL data:
+
+```bash
+docker compose down
+```
+
+To deliberately delete the local PostgreSQL volume and start from an empty database:
+
+```bash
+docker compose down -v
+```
+
+The second command permanently deletes the local April database. Run migrations and recreate the
+workspace, project, and credentials afterward.
+
+## Current limitations
+
+- Ingestion writes synchronously to PostgreSQL; there is no Kafka or background ingestion queue.
+- ClickHouse is not used yet.
+- The MCP supports local stdio only and has no remote transport or end-user authentication.
+- There is no production SDK or product analytics dashboard yet.
+- Cross-product user overlap compares exact `distinct_id` values; April does not resolve different
+  product-specific IDs to the same person.
+- Product classification is carried in event properties rather than a separate Product model.
+- Workspaces and projects are logical boundaries in one database. Separate databases or deployments
+  for testing, staging, and production are deployment choices, not behavior enforced by these
+  models.
