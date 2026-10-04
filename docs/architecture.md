@@ -8,10 +8,12 @@ responsibility:
 ```text
 analytics_platform
 ├── catalog        # Workspaces and projects
-├── event_catalog  # Known event names and their documentation
+├── event_catalog  # Event names and per-event property definitions
 ├── events         # Events that have been received and stored
-├── group_analytics # Current project-scoped group profiles
+├── group_analytics # Group profiles and project/group-type property definitions
 ├── ingestion      # Credentials, authentication, validation, and ingestion
+├── analytics      # Structured, bounded read-only query services
+├── mcp_adapter    # Typed local MCP tools over the query services
 └── common         # Shared model fields such as UUIDs and timestamps
 ```
 
@@ -30,6 +32,7 @@ Request
   → validate the event envelope
   → check whether the event was already received
   → update its group profile or discover its business event definition
+  → merge observational event/group property metadata
   → store the event
   → commit the PostgreSQL transaction
   → return the result
@@ -102,6 +105,60 @@ lock so separate property updates are not lost.
 No association is inferred. A group identified today is not written onto older
 events that arrived without it. Profile properties describe current state; business
 transitions that matter over time must be captured as events.
+
+Event properties are scoped to `EventDefinition`; group properties are scoped to project and group
+type. Producers may continue sending flexible JSON without a fixed property schema. The catalogs
+record observed non-null JSON types, nullability separately, and first/last occurrence timestamps,
+but never retain sample values. Null plus one non-null type is not a type conflict; a conflict means
+multiple incompatible non-null types.
+
+The property catalog schema migrations do not contain data scans. Existing rows are discovered with
+`backfill_property_catalog`, which reads bounded batches ordered and filtered by `Event.id`. The
+`--after-event-pk` cursor is the last processed Event primary key, and `--through-event-pk` fixes the
+high-water primary key for a resumable run. The merge is idempotent, so completed ranges may be
+repeated safely. The cursor does not refer to the producer UUID stored in `Event.uuid`.
+
+## Analytics and MCP execution
+
+Analytics inputs are structured filters, dimensions, aggregations, labeled activity rules, and
+periods. The query service compiles only supported operations; it accepts no SQL or caller
+predicate. Event property references are scoped to an event definition. Group property references
+require a group type. Visible and verified properties appear in discovery and can be queried;
+hidden properties are excluded from discovery and rejected when explicitly referenced.
+
+Event and product filters are resolved against visible or verified event definitions; unknown
+selectors are input errors, and an explicit selector does not include hidden event definitions.
+Event-property references require an event and may omit product to span every matching visible
+definition across products. Property queries return coverage per definition: base event count,
+property-present count (including explicit JSON null), explicit-null count, missing-property count,
+and final matched count. Property dimensions encode scalar values, explicit nulls, and missing keys
+as separate buckets; nested objects and arrays cannot be grouping keys. Reserved profile-update
+events are excluded from general event queries. The maximum window is 366 days, `in` and `not_in`
+accept at most 100 values, and a comparison period must have the same duration as its current
+period. A missing comparison group uses zero for counts and sums, but `null` for averages, minima,
+and maxima.
+
+Group analyses that read profile state require a declared time basis: `current`, `period_start`,
+`period_end`, or `event_time`, with each tool limiting that set to the semantics it supports. Group activity uses
+multiple labeled event rules with explicit `match=all` or `match=any`. Adoption requires explicit
+eligibility filters. With event-time eligibility, the denominator includes each group that matched
+the eligibility filters at any point in the period; matching activity counts only while the group
+was eligible. Adoption returns matching event depth as total events and median events per adopting
+group. Funnels can correlate ordered steps by group key, exact `distinct_id`, or a shared observed
+string or number event property. Each step requires a distinct later occurrence, and correlation
+values are not returned. A funnel needs `state_basis` only when group filters read profile state.
+Comparisons reuse a shared comparison
+service so event and group tools report aligned current, baseline, delta, and percent-change rows
+through one contract.
+
+The MCP adapter sets PostgreSQL `statement_timeout` with transaction-local `set_config(..., true)`
+inside each analytics tool execution. It does not put a timeout in Django's global database
+configuration, so ingestion, migrations, admin operations, and catalog backfills do not inherit the
+analytics limit. Non-PostgreSQL test databases skip this PostgreSQL-specific setting.
+MCP responses are limited by `ANALYTICS_MAX_RESPONSE_BYTES`, which defaults to 1 MiB. Historical
+group reconstruction is capped at 100,000 matching profile events, and unscoped current-state
+analysis is capped at 20,000 groups. Oversized work fails explicitly instead of returning partial
+results.
 
 ## Stored events are append-only
 

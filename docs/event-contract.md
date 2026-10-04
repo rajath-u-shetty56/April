@@ -47,8 +47,18 @@ implemented. Product/account conventions do not add database models.
 Business properties remain flexible, including nested objects and arrays. The
 platform does not enforce product-specific schemas or versions. Unknown envelope
 fields are rejected; flexible fields inside `properties` are accepted.
+Nested values remain available to exact structured filters, but analytics grouping dimensions are
+limited to scalar properties so MCP results do not echo nested objects as bucket labels.
 JSON must be representable in PostgreSQL: non-finite numbers, NUL characters, and
 unpaired Unicode surrogates are rejected.
+
+Ingestion also updates an observational catalog for top-level event properties,
+scoped to the event's `EventDefinition`. `$group_set` keys update a separate
+catalog scoped to project and group type. Each catalog records observed non-null
+JSON types, whether a null was seen, and first/last occurrence timestamps, but
+never stores sample values. Null plus one concrete type remains nullable without
+a conflict; a conflict requires multiple incompatible non-null types. This
+catalog does not make ingestion reject mixed property shapes.
 
 `version` is optional producer-controlled metadata. Both `1` and `"1"` are stored
 without version validation, preserving the existing Contact Center convention.
@@ -80,6 +90,7 @@ Current descriptive information about a group is updated through the reserved
 `$group_set` is merged into the group's current properties. Existing keys not
 included in an update are preserved. The event itself is stored for retry and
 audit behavior, but it is not added to the business `EventDefinition` catalog.
+Its top-level `$group_set` keys update the observational group property catalog.
 
 The two concepts are deliberately separate:
 
@@ -133,9 +144,9 @@ Omitting timestamp on a retry preserves the stored timestamp. Reusing a UUID wit
 conflicting content returns HTTP 409, `UUID_CONFLICT`, and field `uuid`.
 
 Acceptance means the database transaction has successfully committed, including
-new event-definition discovery and its latest-seen timestamp. It does not imply a
-queue handoff. Received time is distinct from producer occurrence time and is
-unchanged on retry.
+new event/group property observations, event-definition discovery, and its latest-seen
+timestamp. It does not imply a queue handoff. Received time is distinct from producer
+occurrence time and is unchanged on retry.
 
 ## Bulk ingestion
 

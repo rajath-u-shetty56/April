@@ -4,8 +4,10 @@
 Workspace
 └── Project
     ├── EventDefinition
+    │   └── EventPropertyDefinition
     ├── IngestionCredential
     ├── GroupProfile
+    ├── GroupPropertyDefinition
     └── Event
 ```
 
@@ -34,10 +36,36 @@ Successful ingestion copies `properties.product` into `product_key` and discover
 missing definitions automatically with status `visible`. Existing metadata is
 preserved. Staff can edit description, owner, and status without changing the
 event identity. `hidden` removes an event from normal future discovery; it does
-not reject later occurrences. `verified` marks reviewed definitions that future
-analytics and MCP discovery can prefer. Definitions contain neither occurrences
+not reject later occurrences. Explicit event and product analytics selectors resolve only
+visible or verified definitions, excluding hidden definitions and reporting unknown selectors as
+input errors. `verified` marks reviewed definitions. Definitions contain neither occurrences
 nor strict property schemas; events store their event name directly and do not
 depend on a foreign key to mutable catalog metadata.
+
+## EventPropertyDefinition
+
+An observational definition for a top-level event property, scoped to one
+`EventDefinition`. Its unique identity is the event definition plus a SHA-256
+hash of the full property name; the original property name remains available for
+discovery. The catalog stores description and status (`visible`, `verified`, or
+`hidden`), sorted observed non-null JSON types, a separate `nullable` flag, and
+first/last observation timestamps. It never stores sample property values.
+
+Ingestion remains flexible and does not reject a property because its observed
+type changes. Null plus one concrete type is nullable, not a conflict. A type
+conflict means that more than one incompatible non-null type was observed.
+Visible and verified properties are discoverable and can be queried explicitly;
+hidden properties are omitted from discovery and rejected by explicit analytics
+queries. An event-property selector requires an event and may omit product to match that property
+across visible definitions for the event; query responses report coverage separately for each
+matching event/product definition. Properties used as grouping dimensions must have observed scalar
+values; nested objects and arrays remain stored but are not returned as dimension keys.
+
+The schema migration creates this table but does not scan stored events. The
+`backfill_property_catalog` management command merges event and group property
+observations in bounded batches. Its `--after-event-pk` and `--through-event-pk`
+cursors use `Event.id`, ordered by that database primary key, and can be resumed
+from the last processed primary key. Repeated ranges are idempotent.
 
 ## Event
 
@@ -73,6 +101,17 @@ An ordinary event's `groups` object creates or touches the matching profiles. Th
 reserved `$groupidentify` event merges current properties. Both operations happen
 in the same transaction as event storage. A delayed event cannot move
 `last_seen_at` backwards, and identifying a group does not modify older events.
+
+## GroupPropertyDefinition
+
+An observational definition for a top-level `$group_set` property, scoped to
+`project + group_type + property_name`. It stores the same description, status,
+observed non-null types, separate nullability, and first/last timestamps as an
+event property definition, without retaining values. Visible and verified
+properties are discoverable and explicitly queryable; hidden properties are
+omitted from discovery and rejected by explicit state filters. Group state
+remains in `GroupProfile` plus immutable `$groupidentify` events; this catalog
+does not add historical snapshots.
 
 ## IngestionCredential
 

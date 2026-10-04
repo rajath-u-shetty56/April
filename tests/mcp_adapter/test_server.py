@@ -1,10 +1,16 @@
 from uuid import uuid4
 
 import pytest
+from asgiref.sync import sync_to_async
+from django.db import connections
+from django.utils import timezone
 from mcp.client import Client
 
 from analytics_platform.catalog.models import Project
+from analytics_platform.event_catalog.models import EventDefinition, EventPropertyDefinition
 from analytics_platform.mcp_adapter.server import create_server
+
+pytestmark = pytest.mark.django_db(transaction=True)
 
 
 @pytest.fixture
@@ -19,204 +25,134 @@ def inactive_project(workspace):
     )
 
 
-@pytest.mark.anyio
-async def test_tool_discovery_exposes_only_reviewed_read_only_tools():
-    server = create_server(uuid4())
-
-    async with Client(server) as client:
-        result = await client.list_tools()
-
-    expected = {
-        "describe_project",
-        "get_account_profile",
-        "summarize_account_activity",
-        "find_cross_product_accounts",
-        "analyze_product_adoption",
-        "count_feature_users",
-        "analyze_funnel",
-        "analyze_account_change",
-        "analyze_trial_outcomes",
-    }
-    assert {tool.name for tool in result.tools} == expected
-    for tool in result.tools:
-        assert tool.description
-        assert len(tool.description.strip()) >= 40
-        assert tool.annotations.read_only_hint is True
-        assert tool.annotations.open_world_hint is False
-        assert tool.output_schema is not None
-        schema_text = str(tool.input_schema).lower()
-        for forbidden in ("project_id", "workspace", "sql", "predicate"):
-            assert forbidden not in schema_text
-    tools_by_name = {tool.name: tool for tool in result.tools}
-    assert "population_basis" in str(
-        tools_by_name["find_cross_product_accounts"].output_schema
-    )
-    adoption_schema = str(tools_by_name["analyze_product_adoption"].output_schema)
-    assert "any_observed_product_event_in_period" in adoption_schema
-    assert "qualifying_feature_events_in_period" in adoption_schema
-    assert "adoption_rate_threshold" in adoption_schema
-    assert "actual_median_depth" in adoption_schema
-    adoption_description = tools_by_name["analyze_product_adoption"].description
-    assert "any observed product event" in adoption_description
-    assert "qualifying feature events" in adoption_description
-
-
-@pytest.mark.anyio
-@pytest.mark.django_db(transaction=True)
-async def test_every_tool_returns_structured_scope_and_evidence(project):
-    server = create_server(project.pk)
-    start = "2026-09-01T00:00:00Z"
-    end = "2026-10-01T00:00:00Z"
-    calls = {
-        "describe_project": {},
-        "get_account_profile": {"account_key": "missing"},
-        "summarize_account_activity": {
-            "account_key": "missing",
-            "start": start,
-            "end": end,
-        },
-        "find_cross_product_accounts": {
-            "products": ["helpdesk", "contact_center", "rise"],
-            "start": start,
-            "end": end,
-        },
-        "analyze_product_adoption": {
-            "product": "contact_center",
-            "feature": "ai_summary",
-            "start": start,
-            "end": end,
-            "include_plan_breakdown": True,
-        },
-        "count_feature_users": {
-            "product": "contact_center",
-            "feature": "ai_summary",
-            "start": start,
-            "end": end,
-        },
-        "analyze_funnel": {
-            "funnel": "call_connection",
-            "start": start,
-            "end": end,
-        },
-        "analyze_account_change": {
-            "kind": "usage_decline",
-            "product": "contact_center",
-            "start": start,
-            "end": end,
-        },
-        "analyze_trial_outcomes": {
-            "product": "contact_center",
-            "start": start,
-            "end": end,
-        },
-    }
-
-    async with Client(server) as client:
-        results = {
-            name: await client.call_tool(name, arguments) for name, arguments in calls.items()
-        }
-
-    for name, result in results.items():
-        assert result.is_error is False, name
-        assert result.structured_content["scope"] == {"project_id": str(project.pk)}
-    assert results["get_account_profile"].structured_content["found"] is False
-    assert results["describe_project"].structured_content["event_definitions"]["truncated"] is False
-    for name in set(results) - {"describe_project", "get_account_profile"}:
-        payload = results[name].structured_content
-        assert payload["period"] == {"start": start, "end": end}
-        assert payload["interpretation"]
-
-
 def _error_text(result) -> str:
     return " ".join(block.text for block in result.content if hasattr(block, "text"))
 
 
+def _seed_hidden_property(project):
+    definition = EventDefinition.objects.create(
+        project=project,
+        product_key="example",
+        name="record_created",
+    )
+    EventPropertyDefinition.objects.create(
+        event_definition=definition,
+        property_name="secret",
+        status="hidden",
+        observed_non_null_types=["string"],
+        first_seen_at=timezone.now(),
+        last_seen_at=timezone.now(),
+    )
+
+
 @pytest.mark.anyio
-@pytest.mark.django_db(transaction=True)
+async def test_tool_discovery_exposes_only_generic_read_only_tools():
+    async with Client(create_server(uuid4())) as client:
+        result = await client.list_tools()
+
+    expected = {
+        "discover_analytics_catalog",
+        "query_events",
+        "analyze_group_state",
+        "query_group_activity",
+        "analyze_group_adoption",
+        "analyze_group_funnel",
+        "analyze_group_transitions",
+        "compare_group_activity",
+    }
+    assert {tool.name for tool in result.tools} == expected
+    tools = {tool.name: tool for tool in result.tools}
+    for tool in result.tools:
+        assert tool.description and len(tool.description.strip()) >= 40
+        assert tool.annotations.read_only_hint is True
+        assert tool.annotations.open_world_hint is False
+        assert tool.output_schema is not None
+        schema_text = str(tool.input_schema).lower()
+        assert "project_id" not in schema_text
+        assert "sql" not in schema_text
+        assert "happyfox" not in tool.description.lower()
+
+    activity_schema = str(tools["query_group_activity"].input_schema)
+    assert "activity_rules" in activity_schema
+    assert "all" in activity_schema and "any" in activity_schema
+    assert "state_basis" in activity_schema
+    state_schema = tools["analyze_group_state"].input_schema
+    assert "group_key" not in state_schema.get("required", [])
+    assert "state_basis" in state_schema.get("required", [])
+    adoption_schema = tools["analyze_group_adoption"].input_schema
+    assert "eligibility_filters" in adoption_schema.get("required", [])
+
+
+@pytest.mark.anyio
 @pytest.mark.parametrize(
     ("start", "end", "expected_message"),
     [
-        (
-            "not-a-timestamp",
-            "2026-10-01T00:00:00Z",
-            "start and end must be ISO 8601 timestamps",
-        ),
-        (
-            "2026-09-01T00:00:00",
-            "2026-10-01T00:00:00Z",
-            "start must be timezone-aware",
-        ),
-        (
-            "2026-10-01T00:00:00Z",
-            "2026-09-01T00:00:00Z",
-            "start must be before end",
-        ),
+        ("not-a-timestamp", "2026-10-01T00:00:00Z", "ISO 8601 timestamps"),
+        ("2026-09-01T00:00:00", "2026-10-01T00:00:00Z", "timezone-aware"),
+        ("2026-10-01T00:00:00Z", "2026-09-01T00:00:00Z", "start must be before end"),
     ],
 )
-async def test_period_errors_preserve_specific_safe_validation_messages(
+async def test_query_events_period_errors_are_specific_and_safe(
     project, start, end, expected_message
 ):
     async with Client(create_server(project.pk)) as client:
         result = await client.call_tool(
-            "summarize_account_activity",
-            {"account_key": "acme", "start": start, "end": end},
+            "query_events",
+            {
+                "start": start,
+                "end": end,
+                "aggregations": [{"kind": "event_count", "label": "events"}],
+            },
         )
 
     assert result.is_error is True
-    text = _error_text(result)
-    assert expected_message in text
-    assert "Traceback" not in text
-    assert "ValueError" not in text
-    assert "DATABASE_URL" not in text
+    assert expected_message in _error_text(result)
+    assert "Traceback" not in _error_text(result)
+    assert "DATABASE_URL" not in _error_text(result)
 
 
 @pytest.mark.anyio
-@pytest.mark.django_db(transaction=True)
-async def test_tool_errors_are_sanitized_for_invalid_inputs_and_unavailable_scope(
+async def test_tool_arguments_cannot_override_project_scope_or_query_hidden_properties(
     project, inactive_project
 ):
-    start = "2026-09-01T00:00:00Z"
-    end = "2026-10-01T00:00:00Z"
-    invalid_calls = [
-        (
-            create_server(project.pk),
-            "analyze_product_adoption",
-            {"product": "unknown", "start": start, "end": end},
-        ),
-        (
-            create_server(project.pk),
-            "count_feature_users",
+    await sync_to_async(_seed_hidden_property)(project)
+    async with Client(create_server(project.pk)) as client:
+        override = await client.call_tool(
+            "discover_analytics_catalog", {"project_id": str(inactive_project.pk)}
+        )
+        hidden = await client.call_tool(
+            "query_events",
             {
-                "product": "contact_center",
-                "start": "2026-09-01T00:00:00",
-                "end": end,
+                "start": "2026-09-01T00:00:00Z",
+                "end": "2026-10-01T00:00:00Z",
+                "filters": [
+                    {
+                        "field": "property",
+                        "event": "record_created",
+                        "product": "example",
+                        "property_name": "secret",
+                        "operator": "eq",
+                        "value": "x",
+                    }
+                ],
+                "aggregations": [{"kind": "event_count", "label": "events"}],
             },
-        ),
-        (
-            create_server(project.pk),
-            "summarize_account_activity",
-            {"account_key": "acme", "start": end, "end": start},
-        ),
-        (
-            create_server(project.pk),
-            "describe_project",
-            {"event_definition_limit": 201},
-        ),
-        (create_server(inactive_project.pk), "describe_project", {}),
-        (create_server(uuid4()), "describe_project", {}),
-    ]
+        )
 
-    for server, name, arguments in invalid_calls:
-        async with Client(server) as client:
-            result = await client.call_tool(name, arguments)
-        assert result.is_error is True
-        text = _error_text(result)
-        assert "Traceback" not in text
-        assert "DATABASE_URL" not in text
+    async with Client(create_server(inactive_project.pk)) as client:
+        unavailable_scope = await client.call_tool("discover_analytics_catalog", {})
+    await sync_to_async(connections.close_all)()
+
+    assert override.is_error is False
+    assert override.structured_content["scope"] == {"project_id": str(project.pk)}
+    assert hidden.is_error is True
+    assert "hidden" in _error_text(hidden)
+    assert unavailable_scope.is_error is True
+    assert "Traceback" not in _error_text(unavailable_scope)
+    assert "DATABASE_URL" not in _error_text(unavailable_scope)
 
 
 @pytest.mark.anyio
-@pytest.mark.django_db(transaction=True)
 async def test_unexpected_service_failure_is_generic_and_safely_logged(
     project, monkeypatch, caplog
 ):
@@ -225,11 +161,11 @@ async def test_unexpected_service_failure_is_generic_and_safely_logged(
     def fail(*args, **kwargs):
         raise RuntimeError("database password=fake-secret")
 
-    monkeypatch.setattr(server_module, "describe_project_service", fail)
+    monkeypatch.setattr(server_module, "discover_analytics_catalog_service", fail)
     caplog.set_level("ERROR", logger="analytics.mcp")
 
     async with Client(create_server(project.pk)) as client:
-        result = await client.call_tool("describe_project", {})
+        result = await client.call_tool("discover_analytics_catalog", {})
 
     assert result.is_error is True
     assert "Analytics query failed" in _error_text(result)

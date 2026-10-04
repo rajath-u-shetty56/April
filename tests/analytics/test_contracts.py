@@ -44,6 +44,14 @@ def test_time_range_rejects_naive_or_non_increasing_bounds(start, end):
         TimeRange.create(start, end)
 
 
+def test_time_range_rejects_windows_longer_than_366_days():
+    with pytest.raises(AnalyticsInputError, match="limited to 366 days"):
+        TimeRange.create(
+            datetime(2026, 1, 1, tzinfo=UTC),
+            datetime(2027, 1, 3, tzinfo=UTC),
+        )
+
+
 def test_bounded_list_reports_full_population():
     result = BoundedList.from_items(["alpha", "bravo", "charlie"], limit=2)
 

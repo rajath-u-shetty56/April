@@ -3,24 +3,78 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict
 
 
+class InputModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
 class OutputModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class EventFilterInput(InputModel):
+    field: Literal["event", "product", "distinct_id", "group_key", "property"]
+    operator: Literal["eq", "ne", "in", "not_in", "gt", "gte", "lt", "lte", "exists"]
+    value: Any = None
+    group_type: str | None = None
+    event: str | None = None
+    product: str | None = None
+    property_name: str | None = None
+
+
+class EventDimensionInput(InputModel):
+    kind: Literal["event", "product", "group_key", "property", "day", "week", "month"]
+    label: str
+    group_type: str | None = None
+    event: str | None = None
+    product: str | None = None
+    property_name: str | None = None
+
+
+class EventAggregationInput(InputModel):
+    kind: Literal[
+        "event_count",
+        "distinct_id_count",
+        "distinct_group_count",
+        "count_property",
+        "sum_property",
+        "avg_property",
+        "min_property",
+        "max_property",
+    ]
+    label: str
+    group_type: str | None = None
+    event: str | None = None
+    product: str | None = None
+    property_name: str | None = None
+
+
+class GroupFilterInput(InputModel):
+    property_name: str
+    operator: Literal["eq", "ne", "in", "not_in", "gt", "gte", "lt", "lte", "exists"]
+    value: Any = None
+
+
+class ActivityPropertyFilterInput(InputModel):
+    operator: Literal["eq", "ne", "in", "not_in", "gt", "gte", "lt", "lte", "exists"]
+    property_name: str
+    value: Any = None
+
+
+class ActivityRuleInput(InputModel):
+    label: str
+    event: str
+    product: str
+    filters: list[ActivityPropertyFilterInput] | None = None
+
+
+class FunnelCorrelationInput(InputModel):
+    kind: Literal["group_key", "distinct_id", "property"]
+    group_type: str | None = None
+    property_name: str | None = None
+
+
 class ScopeOutput(OutputModel):
     project_id: str
-
-
-class TimeRangeOutput(OutputModel):
-    start: str
-    end: str
-
-
-class InterpretationOutput(OutputModel):
-    usage_window: str
-    entitlement_basis: str | None = None
-    plan_attribution_basis: str | None = None
-    historical_profile_reliability: str | None = None
 
 
 class BoundedMetadataOutput(OutputModel):
@@ -30,142 +84,99 @@ class BoundedMetadataOutput(OutputModel):
     truncated: bool
 
 
-class ProjectDescriptionOutput(OutputModel):
+class PropertyCoverageOutput(OutputModel):
+    current: BoundedMetadataOutput
+    baseline: BoundedMetadataOutput | None = None
+
+
+class AnalyticsCatalogOutput(OutputModel):
     scope: ScopeOutput
-    workspace_key: str
-    project_key: str
-    project_name: str
+    products: list[str]
     counts: dict[str, int]
-    products: list[str]
-    event_range: dict[str, str | None]
     event_definitions: BoundedMetadataOutput
+    event_properties: BoundedMetadataOutput
+    group_properties: BoundedMetadataOutput
 
 
-class AccountProfileOutput(OutputModel):
+class EventQueryOutput(OutputModel):
     scope: ScopeOutput
-    account_key: str
-    found: bool
-    state_basis: str
-    properties: dict[str, Any]
-    last_seen_at: str | None
+    period: dict[str, str]
+    dimensions: list[str]
+    aggregations: list[str]
+    rows: BoundedMetadataOutput
+    identifier_semantics: Literal["exact_distinct_id_equality"]
+    comparison: dict[str, Any] | None = None
+    property_coverage: PropertyCoverageOutput | None = None
 
 
-class AccountActivityOutput(OutputModel):
+class GroupStateOutput(OutputModel):
     scope: ScopeOutput
-    period: TimeRangeOutput
-    interpretation: InterpretationOutput
-    account_key: str
-    active_products: list[str]
-    event_counts: dict[str, dict[str, int]]
-    distinct_users_by_product: dict[str, int]
+    group_type: str
+    state_basis: Literal["current", "period_start", "period_end", "event_time"]
+    state_as_of: str
+    historical_profile_reliability: str | None
+    period: dict[str, str] | None = None
+    groups: BoundedMetadataOutput
+    requested_group_key: str | None = None
+    found: bool | None = None
 
 
-class UserOverlapOutput(OutputModel):
-    population_basis: str
-    products: list[str]
-    users_by_product: dict[str, int]
-    users_in_all_products: int
-    pairwise_overlap: dict[str, int]
-
-
-class CrossProductOutput(OutputModel):
+class GroupActivityOutput(OutputModel):
     scope: ScopeOutput
-    period: TimeRangeOutput
-    interpretation: InterpretationOutput
-    products: list[str]
-    accounts: BoundedMetadataOutput
-    aggregate_event_counts: dict[str, int]
-    user_overlap: UserOverlapOutput | None
+    period: dict[str, str]
+    group_type: str
+    state_basis: Literal["current", "period_start", "period_end", "event_time"]
+    match: Literal["all", "any"]
+    activity_rules: list[dict[str, str]]
+    groups: BoundedMetadataOutput
+    historical_profile_reliability: str | None
+    distinct_id_overlap: dict[str, Any] | None = None
 
 
-class AdoptionRateOutput(OutputModel):
+class GroupAdoptionOutput(OutputModel):
+    scope: ScopeOutput
+    period: dict[str, str]
+    group_type: str
+    state_basis: Literal["current", "period_start", "period_end", "event_time"]
+    eligibility_basis: str
+    historical_profile_reliability: str | None
+    eligibility_filters: list[dict[str, Any]]
+    activity_rule: dict[str, str]
     numerator: int
     denominator: int
-    rate: float
-
-
-class HighAdoptionLowDepthOutput(OutputModel):
-    adoption_numerator: int
-    adoption_denominator: int
     adoption_rate: float
-    adoption_rate_threshold: float
-    minimum_account_threshold: int
-    median_depth_threshold: float
-    actual_median_depth: float
-    classified: bool
+    event_depth: dict[str, Any]
+    adopting_group_keys: BoundedMetadataOutput
+    eligible_group_keys: BoundedMetadataOutput
 
 
-class OverallAdoptionOutput(OutputModel):
-    usage_basis: Literal["any_observed_product_event_in_period"]
-    observed_account_count: int
-    observed_accounts: BoundedMetadataOutput
-    period_end_entitled_accounts: BoundedMetadataOutput
-    period_end_entitled_adoption: AdoptionRateOutput
-    entitled_without_usage: BoundedMetadataOutput
-
-
-class FeatureAdoptionOutput(OutputModel):
-    usage_basis: Literal["qualifying_feature_events_in_period"]
-    observed_adopting_account_count: int
-    observed_event_count: int
-    median_events_per_adopting_account: float
-    high_adoption_low_depth: HighAdoptionLowDepthOutput
-    period_end_entitled_adoption: AdoptionRateOutput
-    adopting_accounts: BoundedMetadataOutput
-
-
-class AdoptionOutput(OutputModel):
+class GroupFunnelOutput(OutputModel):
     scope: ScopeOutput
-    period: TimeRangeOutput
-    interpretation: InterpretationOutput
-    product: str
-    overall: OverallAdoptionOutput
-    features: dict[str, FeatureAdoptionOutput]
-    plans: dict[str, dict[str, Any]] | None = None
-
-
-class FeatureUsersOutput(OutputModel):
-    scope: ScopeOutput
-    period: TimeRangeOutput
-    interpretation: InterpretationOutput
-    product: str
-    features: list[str]
-    accounts: BoundedMetadataOutput
-    totals_by_feature: dict[str, int]
-
-
-class FunnelOutput(OutputModel):
-    scope: ScopeOutput
-    period: TimeRangeOutput
-    interpretation: InterpretationOutput
-    funnel: str
-    configuration: dict[str, str]
-    started: int
-    completed: int
-    lost: int
+    period: dict[str, str]
+    group_type: str | None
+    correlation: dict[str, Any]
+    state_basis: Literal["current", "period_start", "period_end", "event_time"] | None
+    historical_profile_reliability: str | None
+    started_cohort_count: int
+    completed_cohort_count: int
     completion_rate: float
-    accounts_started: int
-    accounts_completed: int
+    steps: list[dict[str, Any]]
 
 
-class AccountChangeOutput(OutputModel):
+class GroupTransitionsOutput(OutputModel):
     scope: ScopeOutput
-    period: TimeRangeOutput
-    comparison_period: TimeRangeOutput
-    interpretation: InterpretationOutput
-    kind: str
-    product: str
-    feature: str | None
-    threshold: float | None
-    matching_account_count: int
-    accounts: BoundedMetadataOutput
+    period: dict[str, str]
+    group_type: str
+    property_name: str
+    state_basis: Literal["event_time"]
+    historical_profile_reliability: str
+    transitions: BoundedMetadataOutput
 
 
-class TrialOutcomeOutput(OutputModel):
+class GroupActivityComparisonOutput(OutputModel):
     scope: ScopeOutput
-    period: TimeRangeOutput
-    interpretation: InterpretationOutput
-    product: str
-    semantics: dict[str, str]
-    used_before_conversion: BoundedMetadataOutput
-    used_then_expired: BoundedMetadataOutput
+    group_type: str
+    state_basis: Literal["current", "period_start", "period_end", "event_time"]
+    match: Literal["all", "any"]
+    activity_rules: list[dict[str, str]]
+    comparison: dict[str, Any]

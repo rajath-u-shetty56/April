@@ -85,6 +85,14 @@ INGESTION_MAX_PROPERTY_BYTES = int(os.environ.get("INGESTION_MAX_PROPERTY_BYTES"
 INGESTION_MAX_BATCH_EVENTS = int(os.environ.get("INGESTION_MAX_BATCH_EVENTS", 500))
 INGESTION_MAX_GROUPS = int(os.environ.get("INGESTION_MAX_GROUPS", 5))
 
+# Applied with a transaction-local setting only while the analytics MCP executes a query.
+ANALYTICS_QUERY_TIMEOUT_MS = int(os.environ.get("ANALYTICS_QUERY_TIMEOUT_MS", 15000))
+if ANALYTICS_QUERY_TIMEOUT_MS < 1:
+    raise ImproperlyConfigured("ANALYTICS_QUERY_TIMEOUT_MS must be positive")
+ANALYTICS_MAX_RESPONSE_BYTES = int(os.environ.get("ANALYTICS_MAX_RESPONSE_BYTES", 1048576))
+if ANALYTICS_MAX_RESPONSE_BYTES < 1:
+    raise ImproperlyConfigured("ANALYTICS_MAX_RESPONSE_BYTES must be positive")
+
 # Rejection records are already JSON and contain a log-derived counter sample.
 LOGGING = {
     "version": 1,

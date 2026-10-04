@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Analyze and assert April's stored synthetic analytics validation dataset."""
+"""Run generic structured analytics queries against the synthetic validation dataset."""
 
 from __future__ import annotations
 
@@ -23,192 +23,206 @@ def _items(result: dict) -> list:
     return result["items"]
 
 
+def _query_periods(cutoff):
+    current = cutoff - timedelta(days=30)
+    previous = current - timedelta(days=30)
+    history = cutoff - timedelta(weeks=10)
+    return current, previous, history
+
+
 def analyze_project(project, *, cutoff=ANALYSIS_CUTOFF) -> dict:
-    """Adapt reusable analytics service results to the legacy validation payload."""
-    from analytics_platform.analytics.accounts import find_cross_product_accounts
-    from analytics_platform.analytics.catalog import describe_project
-    from analytics_platform.analytics.change import analyze_account_change
+    """Build a reusable set of structured event and group analytics results."""
     from analytics_platform.analytics.contracts import TimeRange
-    from analytics_platform.analytics.features import (
-        analyze_product_adoption,
-        count_feature_users,
+    from analytics_platform.analytics.group_queries import (
+        analyze_group_adoption,
+        analyze_group_funnel,
+        analyze_group_state,
+        analyze_group_transitions,
+        compare_group_activity,
+        query_group_activity,
     )
-    from analytics_platform.analytics.funnels import analyze_funnel
-    from analytics_platform.analytics.profiles import load_profile_timelines
-    from analytics_platform.analytics.semantics import SEMANTICS
-    from analytics_platform.analytics.trials import analyze_trial_outcomes
+    from analytics_platform.analytics.query import query_events
+    from analytics_platform.analytics.query_catalog import discover_analytics_catalog
+    from analytics_platform.events.models import Event
+    from analytics_platform.group_analytics.models import GroupProfile
 
-    current_period = TimeRange.create(cutoff - timedelta(days=30), cutoff)
-    dataset_period = TimeRange.create(cutoff - timedelta(weeks=10), cutoff)
-    decline_period = TimeRange.create(cutoff - timedelta(weeks=5), cutoff)
-
-    catalog = describe_project(project, event_definition_limit=200).to_dict()
-    timelines = load_profile_timelines(project)
-    groupidentify_count = sum(len(timeline.transitions) for timeline in timelines.values())
-    definition_counts = dict(
-        sorted(Counter(item["product"] for item in _items(catalog["event_definitions"])).items())
-    )
-
-    adoption_result = analyze_product_adoption(
+    current_start, previous_start, history_start = _query_periods(cutoff)
+    current_period = TimeRange.create(current_start, cutoff)
+    previous_period = TimeRange.create(previous_start, current_start)
+    history_period = TimeRange.create(history_start, cutoff)
+    catalog = discover_analytics_catalog(
         project,
-        "contact_center",
-        current_period,
-        include_plan_breakdown=True,
-        account_limit=200,
-    ).to_dict()
-    feature_adoption = {}
-    for feature, values in adoption_result["features"].items():
-        entitled = values["period_end_entitled_adoption"]
-        feature_adoption[feature] = {
-            "accounts": _items(values["adopting_accounts"]),
-            "account_count": values["observed_adopting_account_count"],
-            "current_entitled_rate": entitled["rate"],
-            "event_count": values["observed_event_count"],
-            "median_events_per_adopting_account": values["median_events_per_adopting_account"],
-        }
+        event_definition_limit=200,
+        event_property_limit=200,
+        group_property_limit=200,
+    )
 
-    plan_adoption = {}
-    for plan, values in adoption_result.get("plans", {}).items():
-        plan_adoption[plan] = {
-            "eligible_account_count": values["eligible_account_count"],
-            "eligible_accounts": _items(values["eligible_accounts"]),
-            "features": {
-                feature: {
-                    "adopting_account_count": feature_values["numerator"],
-                    "adopting_accounts": _items(feature_values["adopting_accounts"]),
-                    "rate": feature_values["rate"],
-                }
-                for feature, feature_values in values["features"].items()
+    product_event_activity = query_events(
+        project,
+        period=current_period,
+        filters=[{"field": "product", "operator": "exists"}],
+        group_by=[
+            {"kind": "product", "label": "product"},
+            {"kind": "event", "label": "event"},
+        ],
+        aggregations=[
+            {"kind": "event_count", "label": "events"},
+            {"kind": "distinct_id_count", "label": "exact_distinct_ids"},
+            {
+                "kind": "distinct_group_count",
+                "label": "groups",
+                "group_type": "account",
             },
-        }
-
-    product = SEMANTICS.get_product("contact_center")
-    overall_adoption = adoption_result["overall"]
-    entitled_accounts = _items(overall_adoption["period_end_entitled_accounts"])
-    observed_accounts = _items(overall_adoption["observed_accounts"])
-
-    cross_two = find_cross_product_accounts(
-        project, ["helpdesk", "contact_center"], current_period, limit=200
+        ],
+        limit=200,
     ).to_dict()
-    cross_three = find_cross_product_accounts(
-        project, ["helpdesk", "contact_center", "bi"], current_period, limit=200
-    ).to_dict()
-    cross_shared = find_cross_product_accounts(
-        project, ["helpdesk", "contact_center", "rise"], current_period, limit=200
-    ).to_dict()
-
-    funnels = {
-        "call_initiated_to_call_connected": analyze_funnel(
-            project, "call_connection", dataset_period
-        ).to_dict(),
-        "call_transfer_initiated_to_call_transfer_completed": analyze_funnel(
-            project, "call_transfer", dataset_period
-        ).to_dict(),
-        "callback_requested_to_callback_fulfilled": analyze_funnel(
-            project, "callback", dataset_period
-        ).to_dict(),
-    }
-    trials = analyze_trial_outcomes(
-        project, "contact_center", dataset_period, account_limit=200
-    ).to_dict()
-    decline = analyze_account_change(
+    product_activity_comparison = query_events(
         project,
-        "usage_decline",
-        "contact_center",
-        decline_period,
-        account_limit=200,
+        period=current_period,
+        filters=[{"field": "product", "operator": "exists"}],
+        group_by=[{"kind": "product", "label": "product"}],
+        aggregations=[
+            {"kind": "event_count", "label": "events"},
+            {"kind": "distinct_id_count", "label": "exact_distinct_ids"},
+        ],
+        comparison_period=previous_period,
+        limit=100,
     ).to_dict()
 
-    abandonment = {}
-    for feature in product.features:
-        result = analyze_account_change(
+    chosen_events = {}
+    for row in _items(product_event_activity["rows"]):
+        product = row.get("product")
+        if isinstance(product, str) and product:
+            chosen_events.setdefault(product, row["event"])
+    activity_rules = [
+        {"label": product, "event": event, "product": product}
+        for product, event in sorted(chosen_events.items())[:3]
+    ]
+
+    group_type = (
+        GroupProfile.objects.filter(project=project)
+        .order_by("group_type")
+        .values_list("group_type", flat=True)
+        .first()
+    )
+    group_state = None
+    group_activity = None
+    group_activity_comparison = None
+    group_adoption = None
+    group_funnel = None
+    group_transitions = None
+    if group_type:
+        group_state = analyze_group_state(
             project,
-            "feature_abandonment",
-            "contact_center",
-            current_period,
-            feature=feature.key,
-            account_limit=200,
-        ).to_dict()
-        stopped = [item["account_key"] for item in _items(result["accounts"])]
-        abandonment[feature.key] = {"stopped_accounts": stopped}
+            group_type=group_type,
+            state_basis="period_end",
+            period=current_period,
+            limit=200,
+        )
+        if len(activity_rules) >= 2:
+            group_activity = query_group_activity(
+                project,
+                group_type=group_type,
+                period=current_period,
+                state_basis="current",
+                activity_rules=activity_rules,
+                match="all",
+                include_distinct_id_overlap=True,
+                limit=200,
+            ).to_dict()
+            group_activity_comparison = compare_group_activity(
+                project,
+                group_type=group_type,
+                period=current_period,
+                comparison_period=previous_period,
+                state_basis="current",
+                activity_rules=activity_rules,
+                match="any",
+                limit=200,
+            )
 
-    distinct_users: dict[str, dict[str, dict[str, int]]] = {}
-    for product_key in SEMANTICS.products:
-        usage = count_feature_users(
-            project, product_key, current_period, account_limit=200
-        ).to_dict()
-        for account in _items(usage["accounts"]):
-            distinct_users.setdefault(account["account_key"], {})[product_key] = account["features"]
+        visible_group_properties = catalog["group_properties"]["items"]
+        if visible_group_properties and activity_rules:
+            group_adoption = analyze_group_adoption(
+                project,
+                group_type=group_type,
+                period=current_period,
+                state_basis="period_end",
+                eligibility_filters=[
+                    {
+                        "property_name": visible_group_properties[0]["property_name"],
+                        "operator": "exists",
+                    }
+                ],
+                activity_rule=activity_rules[0],
+                limit=200,
+            )
 
+        product_events = {}
+        for row in _items(product_event_activity["rows"]):
+            if row.get("product"):
+                product_events.setdefault(row["product"], []).append(row["event"])
+        funnel_product = next(
+            (product for product, events in sorted(product_events.items()) if len(events) >= 2),
+            None,
+        )
+        if funnel_product:
+            steps = product_events[funnel_product][:2]
+            group_funnel = analyze_group_funnel(
+                project,
+                group_type=group_type,
+                period=history_period,
+                state_basis="event_time",
+                steps=[
+                    {"label": f"step_{index + 1}", "event": event, "product": funnel_product}
+                    for index, event in enumerate(steps)
+                ],
+            )
+
+        if visible_group_properties:
+            group_transitions = analyze_group_transitions(
+                project,
+                group_type=group_type,
+                property_name=visible_group_properties[0]["property_name"],
+                period=history_period,
+                state_basis="event_time",
+                limit=200,
+            )
+
+    event_definitions = catalog["event_definitions"]["items"]
+    definitions_by_product = dict(
+        sorted(Counter(item["product"] for item in event_definitions).items())
+    )
+    groupidentify_count = Event.objects.filter(project=project, event="$groupidentify").count()
+    event_count = Event.objects.filter(project=project).count()
     return {
         "scope": {
             "project_id": str(project.pk),
             "cutoff": cutoff.isoformat().replace("+00:00", "Z"),
-            "historical_entitlement_reliability": (
-                "conditional_on_complete_correctly_timestamped_groupidentify_history"
-            ),
         },
         "validation": {
-            "event_count": catalog["counts"]["events"],
-            "behavioral_event_count": catalog["counts"]["events"] - groupidentify_count,
+            "event_count": event_count,
+            "behavioral_event_count": event_count - groupidentify_count,
             "groupidentify_count": groupidentify_count,
-            "group_profile_count": catalog["counts"]["group_profiles"],
-            "event_definitions_by_product": definition_counts,
+            "group_profile_count": GroupProfile.objects.filter(project=project).count(),
+            "event_definitions_by_product": definitions_by_product,
+            "event_property_definition_count": catalog["counts"]["event_property_definitions"],
+            "group_property_definition_count": catalog["counts"]["group_property_definitions"],
         },
-        "feature_adoption": feature_adoption,
-        "adoption_by_plan_at_event_time": {
-            "period_start": current_period.as_dict()["start"],
-            "period_end": current_period.as_dict()["end"],
-            "interpretation": adoption_result["interpretation"],
-            "plans": plan_adoption,
-        },
-        "high_adoption_low_depth": sorted(
-            feature
-            for feature, values in adoption_result["features"].items()
-            if values["high_adoption_low_depth"]["classified"]
-        ),
-        "abandonment": abandonment,
-        "entitlement": {
-            "interpretation": adoption_result["interpretation"],
-            "current_entitled_accounts": entitled_accounts,
-            "observed_usage_accounts": observed_accounts,
-            "entitled_without_usage": _items(overall_adoption["entitled_without_usage"]),
-            "usage_percentage": overall_adoption["period_end_entitled_adoption"]["rate"],
-        },
-        "funnels": funnels,
-        "cross_product": {
-            "period_days": 30,
-            "period_start": current_period.as_dict()["start"],
-            "period_end": current_period.as_dict()["end"],
-            "helpdesk_and_contact_center": [
-                item["account_key"] for item in _items(cross_two["accounts"])
-            ],
-            "helpdesk_contact_center_and_bi": [
-                item["account_key"] for item in _items(cross_three["accounts"])
-            ],
-            "shared_user_overlap": cross_shared["user_overlap"],
-        },
-        "trials": {
-            "used_before_conversion": [
-                item["account_key"] for item in _items(trials["used_before_conversion"])
-            ],
-            "used_then_expired": [
-                item["account_key"] for item in _items(trials["used_then_expired"])
-            ],
-        },
-        "weekly_decline": {
-            "declining_accounts": [item["account_key"] for item in _items(decline["accounts"])]
-        },
-        "distinct_users_by_account_product_feature": {
-            "period_days": 30,
-            "period_start": current_period.as_dict()["start"],
-            "period_end": current_period.as_dict()["end"],
-            "accounts": dict(sorted(distinct_users.items())),
-        },
+        "catalog": catalog,
+        "product_event_activity": product_event_activity,
+        "product_activity_comparison": product_activity_comparison,
+        "group_state": group_state,
+        "cross_product_activity": group_activity,
+        "cross_product_activity_comparison": group_activity_comparison,
+        "explicit_eligibility_adoption": group_adoption,
+        "generic_funnel": group_funnel,
+        "group_property_transitions": group_transitions,
     }
 
 
 def assert_expected_results(result: dict) -> list[str]:
+    """Check the fixed synthetic dataset using generic query result contracts."""
     failures = []
 
     def expect(label, actual, expected):
@@ -224,34 +238,27 @@ def assert_expected_results(result: dict) -> list[str]:
         result["validation"]["event_definitions_by_product"],
         {"bi": 4, "contact_center": 13, "helpdesk": 4, "rise": 3},
     )
-    expect(
-        "entitled without usage",
-        result["entitlement"]["entitled_without_usage"],
-        ["charlie", "hotel"],
-    )
-    expect("entitled usage percentage", result["entitlement"]["usage_percentage"], 75.0)
-    expect(
-        "helpdesk and contact center",
-        result["cross_product"]["helpdesk_and_contact_center"],
-        ["acme", "juliet"],
-    )
-    expect(
-        "helpdesk, contact center, and BI",
-        result["cross_product"]["helpdesk_contact_center_and_bi"],
-        ["acme"],
-    )
-    expect("trial conversion usage", result["trials"]["used_before_conversion"], ["echo"])
-    expect("trial expiry usage", result["trials"]["used_then_expired"], ["foxtrot"])
-    expect(
-        "high adoption and low depth",
-        result["high_adoption_low_depth"],
-        ["supervisor_listen"],
-    )
-    if "golf" not in result["weekly_decline"]["declining_accounts"]:
-        failures.append("weekly decline: golf was not classified as declining")
-    initiated = result["funnels"]["call_initiated_to_call_connected"]
-    if not initiated["started"] > initiated["completed"]:
-        failures.append("call connection funnel: expected at least one lost call")
+
+    activity = result["product_event_activity"]
+    if not activity["rows"]["items"]:
+        failures.append("product event activity: expected observed event groups")
+    comparison = result["product_activity_comparison"]["comparison"]
+    if "current" not in comparison or "baseline" not in comparison:
+        failures.append("product activity comparison: current and baseline windows are required")
+    state = result["group_state"]
+    if state is None or state["state_basis"] != "period_end":
+        failures.append("group state: expected an explicit period_end basis")
+    cross_product = result["cross_product_activity"]
+    if cross_product is None or cross_product["match"] != "all":
+        failures.append("cross-product activity: expected multiple labeled all-match rules")
+    elif not cross_product["activity_rules"]:
+        failures.append("cross-product activity: expected labeled event rules")
+    adoption = result["explicit_eligibility_adoption"]
+    if adoption is not None and not adoption["eligibility_filters"]:
+        failures.append("adoption: expected an explicit eligibility denominator")
+    funnel = result["generic_funnel"]
+    if funnel is not None and funnel["state_basis"] != "event_time":
+        failures.append("funnel: expected an explicit event_time basis")
     return failures
 
 

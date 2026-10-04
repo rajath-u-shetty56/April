@@ -1,12 +1,12 @@
 import subprocess
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 from uuid import UUID
 
 import pytest
+from django.core.management import call_command
 
-from analytics_platform.event_catalog.models import EventDefinition
 from analytics_platform.events.models import Event
 from analytics_platform.group_analytics.models import GroupProfile
 from scripts.mock_analytics_analysis import analyze_project, assert_expected_results
@@ -27,7 +27,7 @@ def test_analysis_script_can_be_invoked_directly():
     )
 
     assert result.returncode == 0, result.stderr
-    assert "Analyze and assert" in result.stdout
+    assert "generic structured analytics" in result.stdout
 
 
 def test_analysis_script_bootstraps_repository_and_django_paths():
@@ -83,17 +83,16 @@ def _store_dataset(project):
         )
         for envelope in envelopes
     )
-    definitions = {
-        (event["properties"]["product"], event["event"]) for event in dataset.behavioral_events
-    }
-    EventDefinition.objects.bulk_create(
-        EventDefinition(project=project, product_key=product, name=name)
-        for product, name in definitions
+    call_command(
+        "backfill_property_catalog",
+        project_id=str(project.pk),
+        batch_size=150,
+        verbosity=0,
     )
     return dataset
 
 
-def test_analysis_answers_core_account_product_and_trial_questions(project):
+def test_analysis_runs_generic_structured_queries_on_backfilled_catalog(project):
     dataset = _store_dataset(project)
 
     result = analyze_project(project, cutoff=ANALYSIS_CUTOFF)
@@ -103,57 +102,29 @@ def test_analysis_answers_core_account_product_and_trial_questions(project):
     )
     assert result["validation"]["groupidentify_count"] == 13
     assert result["validation"]["group_profile_count"] == 10
-    assert result["entitlement"]["current_entitled_accounts"] == [
-        "acme",
-        "bravo",
-        "charlie",
-        "echo",
-        "golf",
-        "hotel",
-        "india",
-        "juliet",
-    ]
-    assert result["entitlement"]["entitled_without_usage"] == ["charlie", "hotel"]
-    assert result["entitlement"]["usage_percentage"] == 75.0
-    assert result["entitlement"]["interpretation"]["entitlement_basis"] == "period_end"
-    assert result["cross_product"]["helpdesk_and_contact_center"] == [
-        "acme",
-        "juliet",
-    ]
-    assert result["cross_product"]["helpdesk_contact_center_and_bi"] == ["acme"]
-    assert result["trials"]["used_before_conversion"] == ["echo"]
-    assert result["trials"]["used_then_expired"] == ["foxtrot"]
-    assert "golf" in result["weekly_decline"]["declining_accounts"]
-    assert result["abandonment"]["supervisor_whisper"]["stopped_accounts"] == ["hotel"]
-    assert "call_initiated" not in result["feature_adoption"]
-    assert "call_transfer" in result["feature_adoption"]
-    assert "ai_summary" in result["feature_adoption"]
-    assert "supervisor_listen" in result["high_adoption_low_depth"]
-    pro_listen = result["adoption_by_plan_at_event_time"]["plans"]["pro"]["features"][
-        "supervisor_listen"
-    ]
-    assert result["adoption_by_plan_at_event_time"]["plans"]["pro"]["eligible_account_count"] == 4
-    assert pro_listen == {
-        "adopting_account_count": 3,
-        "adopting_accounts": ["acme", "golf", "juliet"],
-        "rate": 75.0,
+    assert result["validation"]["event_definitions_by_product"] == {
+        "bi": 4,
+        "contact_center": 13,
+        "helpdesk": 4,
+        "rise": 3,
     }
-    assert (
-        result["adoption_by_plan_at_event_time"]["plans"]["enterprise"]["features"][
-            "supervisor_listen"
-        ]["rate"]
-        == 50.0
-    )
-    assert (
-        result["adoption_by_plan_at_event_time"]["interpretation"]["plan_attribution_basis"]
-        == "event_time"
-    )
+    assert result["validation"]["event_property_definition_count"] > 0
+    assert result["validation"]["group_property_definition_count"] > 0
+    assert result["catalog"]["event_properties"]["returned_count"] > 0
+    assert result["catalog"]["group_properties"]["returned_count"] > 0
+    assert result["product_event_activity"]["rows"]["returned_count"] > 0
+    assert result["product_activity_comparison"]["comparison"]["current"]["returned_count"] > 0
+    assert result["group_state"]["state_basis"] == "period_end"
+    assert result["group_state"]["groups"]["returned_count"] == 10
 
-
-def test_analysis_matches_expected_synthetic_outcomes(project):
-    _store_dataset(project)
-    result = analyze_project(project, cutoff=ANALYSIS_CUTOFF)
-
+    activity = result["cross_product_activity"]
+    assert activity["match"] == "all"
+    assert len(activity["activity_rules"]) >= 2
+    assert activity["distinct_id_overlap"]["basis"] == "exact distinct_id string equality"
+    assert activity["distinct_id_overlap"]["identity_resolution_performed"] is False
+    assert result["explicit_eligibility_adoption"]["eligibility_filters"]
+    assert result["generic_funnel"]["state_basis"] == "event_time"
+    assert result["group_property_transitions"]["state_basis"] == "event_time"
     assert assert_expected_results(result) == []
 
 
@@ -169,44 +140,16 @@ def test_expected_result_assertions_detect_count_and_catalog_drift(project):
     assert any(failure.startswith("event definitions by product:") for failure in failures)
 
 
-def test_funnels_match_events_by_call_id_not_only_aggregate_counts(project):
-    _store_dataset(project)
+def test_exact_identifier_aggregates_never_return_identifier_values(project):
+    dataset = _store_dataset(project)
 
     result = analyze_project(project, cutoff=ANALYSIS_CUTOFF)
-    initiated = result["funnels"]["call_initiated_to_call_connected"]
+    serialized = str(result)
 
-    assert initiated["started"] > initiated["completed"]
-    assert initiated["lost"] == initiated["started"] - initiated["completed"]
-    assert initiated["completion_rate"] < 100
-    assert result["funnels"]["call_transfer_initiated_to_call_transfer_completed"]["lost"] > 0
-    assert result["funnels"]["callback_requested_to_callback_fulfilled"]["lost"] > 0
-
-
-def test_active_cross_product_usage_ignores_products_seen_only_before_period(project):
-    _store_dataset(project)
-    Event.objects.create(
-        project=project,
-        uuid=UUID("00000000-0000-0000-0000-000000000099"),
-        event="dashboard_viewed",
-        distinct_id="bi:juliet:user:1",
-        timestamp=ANALYSIS_CUTOFF - timedelta(days=40),
-        groups={"account": "juliet"},
-        properties={"product": "bi", "dashboard_id": "old-dashboard"},
+    assert result["product_event_activity"]["identifier_semantics"] == (
+        "exact_distinct_id_equality"
     )
-
-    result = analyze_project(project, cutoff=ANALYSIS_CUTOFF)
-
-    assert result["cross_product"]["period_days"] == 30
-    assert result["cross_product"]["helpdesk_contact_center_and_bi"] == ["acme"]
-
-
-def test_distinct_users_are_grouped_by_account_product_and_feature(project):
-    _store_dataset(project)
-
-    result = analyze_project(project, cutoff=ANALYSIS_CUTOFF)
-    acme = result["distinct_users_by_account_product_feature"]["accounts"]["acme"]
-
-    assert result["distinct_users_by_account_product_feature"]["period_days"] == 30
-    assert acme["contact_center"]["call_transfer"] == 4
-    assert acme["contact_center"]["supervisor_listen"] == 2
-    assert acme["helpdesk"]["helpdesk_macro"] == 2
+    for event in dataset.behavioral_events:
+        assert event["distinct_id"] not in serialized
+    assert "distinct_id" in serialized
+    assert "distinct_id_equality" in serialized

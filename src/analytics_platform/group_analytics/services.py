@@ -1,6 +1,7 @@
 from django.db import transaction
 
-from analytics_platform.group_analytics.models import GroupProfile
+from analytics_platform.common.property_observations import observe_properties
+from analytics_platform.group_analytics.models import GroupProfile, GroupPropertyDefinition
 
 
 def _locked_profile(*, project, group_type, group_key):
@@ -37,3 +38,13 @@ def identify_group(*, project, group_type, group_key, properties):
     profile.properties = {**profile.properties, **properties}
     profile.save(update_fields=("properties", "updated_at"))
     return profile
+
+
+@transaction.atomic
+def observe_group_properties(*, project, group_type, properties, occurred_at):
+    observe_properties(
+        GroupPropertyDefinition,
+        {"project": project, "group_type": group_type},
+        properties,
+        occurred_at,
+    )

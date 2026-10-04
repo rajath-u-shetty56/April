@@ -1,13 +1,11 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import asdict, dataclass
-from datetime import UTC, datetime
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
-HISTORICAL_PROFILE_RELIABILITY = (
-    "conditional_on_complete_correctly_timestamped_groupidentify_history"
-)
+MAX_QUERY_WINDOW = timedelta(days=366)
 
 
 class AnalyticsInputError(ValueError):
@@ -33,6 +31,8 @@ class TimeRange:
         normalized_end = end.astimezone(UTC)
         if normalized_start >= normalized_end:
             raise AnalyticsInputError("start must be before end")
+        if normalized_end - normalized_start > MAX_QUERY_WINDOW:
+            raise AnalyticsInputError("query periods are limited to 366 days")
         return cls(start=normalized_start, end=normalized_end)
 
     def as_dict(self) -> dict[str, str]:
@@ -45,17 +45,6 @@ class Scope:
 
     def to_dict(self) -> dict[str, str]:
         return {"project_id": str(self.project_id)}
-
-
-@dataclass(frozen=True)
-class Interpretation:
-    usage_window: str
-    entitlement_basis: str | None = None
-    plan_attribution_basis: str | None = None
-    historical_profile_reliability: str | None = None
-
-    def to_dict(self) -> dict[str, str]:
-        return {key: value for key, value in asdict(self).items() if value is not None}
 
 
 def validate_limit(limit: int) -> int:

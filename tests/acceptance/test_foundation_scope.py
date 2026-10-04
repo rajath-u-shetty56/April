@@ -6,10 +6,10 @@ def test_foundation_excludes_persisted_identity_graph_models():
     assert "relationshiptype" not in apps.get_app_config("event_catalog").models
 
 
-def test_foundation_excludes_strict_schema_registry_models():
+def test_foundation_contains_observational_catalog_not_a_strict_schema_registry():
     event_catalog_models = apps.get_app_config("event_catalog").models
 
-    assert set(event_catalog_models) == {"eventdefinition"}
+    assert set(event_catalog_models) == {"eventdefinition", "eventpropertydefinition"}
 
 
 def test_catalog_contains_only_workspace_and_project_boundaries():

@@ -41,16 +41,18 @@ def test_representative_dataset_slice_flows_through_public_ingestion(project):
     assert response.data["rejected"] == 0
     assert all(item["duplicate"] is False for item in response.data["results"])
     result = analyze_project(project, cutoff=ANALYSIS_CUTOFF)
-    assert result["validation"] == {
-        "event_count": 6,
-        "behavioral_event_count": 4,
-        "groupidentify_count": 2,
-        "group_profile_count": 2,
-        "event_definitions_by_product": {
-            "bi": 1,
-            "contact_center": 1,
-            "helpdesk": 1,
-            "rise": 1,
-        },
+    assert result["validation"]["event_count"] == 6
+    assert result["validation"]["behavioral_event_count"] == 4
+    assert result["validation"]["groupidentify_count"] == 2
+    assert result["validation"]["group_profile_count"] == 2
+    assert result["validation"]["event_definitions_by_product"] == {
+        "bi": 1,
+        "contact_center": 1,
+        "helpdesk": 1,
+        "rise": 1,
     }
+    assert result["validation"]["event_property_definition_count"] > 0
+    assert result["validation"]["group_property_definition_count"] > 0
+    assert result["catalog"]["event_properties"]["returned_count"] > 0
+    assert result["catalog"]["group_properties"]["returned_count"] > 0
     assert set(project.group_profiles.values_list("group_key", flat=True)) == {"acme", "delta"}

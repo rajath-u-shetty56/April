@@ -71,33 +71,43 @@ async def test_real_stdio_server_uses_only_environment_project_scope(
 
     async with Client(parameters) as client:
         tools = await client.list_tools()
-        description = await client.call_tool("describe_project", {})
+        catalog = await client.call_tool("discover_analytics_catalog", {})
         attempted_override = await client.call_tool(
-            "describe_project", {"project_id": "00000000-0000-0000-0000-000000000000"}
+            "discover_analytics_catalog",
+            {"project_id": "00000000-0000-0000-0000-000000000000"},
         )
-        overlap = await client.call_tool(
-            "find_cross_product_accounts",
+        query = await client.call_tool(
+            "query_events",
             {
-                "products": ["helpdesk", "contact_center", "rise"],
                 "start": "2026-09-01T00:00:00Z",
                 "end": "2026-10-01T00:00:00Z",
+                "group_by": [{"kind": "event", "label": "event"}],
+                "aggregations": [{"kind": "event_count", "label": "events"}],
             },
         )
-        adoption = await client.call_tool(
-            "analyze_product_adoption",
+        hidden_or_unknown_property = await client.call_tool(
+            "query_events",
             {
-                "product": "contact_center",
-                "feature": "supervisor_listen",
                 "start": "2026-09-01T00:00:00Z",
                 "end": "2026-10-01T00:00:00Z",
+                "filters": [
+                    {
+                        "field": "property",
+                        "event": "malformed_test_event",
+                        "product": "",
+                        "property_name": "credential",
+                        "operator": "eq",
+                        "value": "x",
+                    }
+                ],
+                "aggregations": [{"kind": "event_count", "label": "events"}],
             },
         )
-        unexpected_error = await client.call_tool(
-            "summarize_account_activity",
+        state = await client.call_tool(
+            "analyze_group_state",
             {
-                "account_key": "malformed",
-                "start": "2026-09-01T00:00:00Z",
-                "end": "2026-10-01T00:00:00Z",
+                "group_type": "account",
+                "state_basis": "current",
             },
         )
         period_errors = []
@@ -108,31 +118,30 @@ async def test_real_stdio_server_uses_only_environment_project_scope(
         ):
             period_errors.append(
                 await client.call_tool(
-                    "summarize_account_activity",
-                    {"account_key": "acme", "start": start, "end": end},
+                    "query_events",
+                    {
+                        "start": start,
+                        "end": end,
+                        "aggregations": [{"kind": "event_count", "label": "events"}],
+                    },
                 )
             )
 
-    assert len(tools.tools) == 9
+    assert len(tools.tools) == 8
     assert all(tool.description and len(tool.description.strip()) >= 40 for tool in tools.tools)
-    assert description.is_error is False
-    assert description.structured_content["scope"] == {"project_id": str(project.pk)}
+    assert catalog.is_error is False
+    assert catalog.structured_content["scope"] == {"project_id": str(project.pk)}
+    assert attempted_override.is_error is False
     assert attempted_override.structured_content["scope"] == {"project_id": str(project.pk)}
-    assert overlap.structured_content["user_overlap"]["population_basis"] == (
-        "all_accounts_with_activity_in_any_requested_product"
-    )
-    classification = adoption.structured_content["features"]["supervisor_listen"][
-        "high_adoption_low_depth"
-    ]
-    assert classification["adoption_numerator"] == 0
-    assert classification["adoption_denominator"] == 0
-    assert classification["adoption_rate_threshold"] == 50.0
-    assert classification["minimum_account_threshold"] == 2
-    assert classification["median_depth_threshold"] == 2.0
-    assert classification["actual_median_depth"] == 0.0
-    assert classification["classified"] is False
-    assert unexpected_error.is_error is True
-    assert malformed_event not in _error_text(unexpected_error)
+    assert query.is_error is False
+    assert query.structured_content["scope"] == {"project_id": str(project.pk)}
+    assert {row["event"] for row in query.structured_content["rows"]["items"]} == {
+        "malformed_test_event"
+    }
+    assert state.is_error is False
+    assert "groups" in state.structured_content
+    assert hidden_or_unknown_property.is_error is True
+    assert "not discovered" in _error_text(hidden_or_unknown_property)
     assert [
         "start and end must be ISO 8601 timestamps" in _error_text(period_errors[0]),
         "start must be timezone-aware" in _error_text(period_errors[1]),

@@ -5,9 +5,16 @@ from django.conf import settings
 from django.db import DatabaseError, transaction
 from django.utils import timezone
 
-from analytics_platform.event_catalog.services import touch_event_definition
+from analytics_platform.event_catalog.services import (
+    observe_event_properties,
+    touch_event_definition,
+)
 from analytics_platform.events.models import Event
-from analytics_platform.group_analytics.services import identify_group, touch_event_groups
+from analytics_platform.group_analytics.services import (
+    identify_group,
+    observe_group_properties,
+    touch_event_groups,
+)
 from analytics_platform.ingestion.contracts import (
     group_identify_values,
     json_bytes,
@@ -72,6 +79,7 @@ def persist_event(credential, value, received_at):
                 raise IngestionError("UUID_CONFLICT", "uuid", 409)
             return {"uuid": str(stored.uuid), "status": "accepted", "duplicate": True}
         identify_values = group_identify_values(value)
+        definition = None
         if identify_values is not None:
             group_type, group_key, group_properties = identify_values
             identify_group(
@@ -86,7 +94,7 @@ def persist_event(credential, value, received_at):
                 groups=value["groups"],
                 occurred_at=value.get("timestamp", received_at),
             )
-            touch_event_definition(
+            definition = touch_event_definition(
                 project=credential.project,
                 product_key=value["properties"].get("product", ""),
                 name=value["event"],
@@ -107,6 +115,21 @@ def persist_event(credential, value, received_at):
         if not created and not same_event(stored, value):
             # Also rolls back a new definition created by a losing conflicting request.
             raise IngestionError("UUID_CONFLICT", "uuid", 409)
+        if created:
+            occurred_at = value.get("timestamp", received_at)
+            if identify_values is not None:
+                observe_group_properties(
+                    project=credential.project,
+                    group_type=group_type,
+                    properties=group_properties,
+                    occurred_at=occurred_at,
+                )
+            else:
+                observe_event_properties(
+                    definition=definition,
+                    properties=value["properties"],
+                    occurred_at=occurred_at,
+                )
     return {"uuid": str(stored.uuid), "status": "accepted", "duplicate": not created}
 
 

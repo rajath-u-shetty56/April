@@ -19,7 +19,7 @@ def anyio_backend():
 
 @pytest.fixture
 def ingested_validation_dataset(project):
-    _, secret = create_credential(project, name="analytics-mcp-validation")
+    _, secret = create_credential(project, name="generic-analytics-mcp-validation")
     producer = APIClient()
     producer.credentials(HTTP_AUTHORIZATION=f"Bearer {secret}")
     dataset = build_dataset()
@@ -45,180 +45,166 @@ async def _call(client, name, arguments, project_id, outputs):
     return payload
 
 
+def _activity_rules_for_acme(dataset, start, end):
+    choices = {}
+    for event in dataset.behavioral_events:
+        timestamp = event["timestamp"].replace("Z", "+00:00")
+        if not start <= timestamp < end or event["groups"].get("account") != "acme":
+            continue
+        product = event["properties"].get("product")
+        if product:
+            choices.setdefault(product, event["event"])
+    return [
+        {"label": product, "event": event, "product": product}
+        for product, event in sorted(choices.items())[:2]
+    ]
+
+
 @pytest.mark.anyio
-async def test_mcp_answers_validation_questions_with_scoped_aggregate_evidence(
+async def test_mcp_exposes_generic_catalog_and_structured_query_tools(
     project, ingested_validation_dataset
 ):
     dataset = ingested_validation_dataset
     current_start = (ANALYSIS_CUTOFF - timedelta(days=30)).isoformat()
-    decline_start = (ANALYSIS_CUTOFF - timedelta(weeks=5)).isoformat()
-    dataset_start = DATASET_START.isoformat()
+    previous_start = (ANALYSIS_CUTOFF - timedelta(days=60)).isoformat()
+    history_start = DATASET_START.isoformat()
     end = ANALYSIS_CUTOFF.isoformat()
+    rules = _activity_rules_for_acme(dataset, current_start, end)
+    assert len(rules) == 2
     outputs = {}
 
     async with Client(create_server(project.pk)) as client:
-        catalog = await _call(client, "describe_project", {}, project.pk, outputs)
-        profile = await _call(
-            client, "get_account_profile", {"account_key": "acme"}, project.pk, outputs
-        )
-        activity = await _call(
+        catalog = await _call(client, "discover_analytics_catalog", {}, project.pk, outputs)
+        event_activity = await _call(
             client,
-            "summarize_account_activity",
-            {"account_key": "acme", "start": current_start, "end": end},
+            "query_events",
+            {
+                "start": current_start,
+                "end": end,
+                "filters": [{"field": "product", "operator": "exists"}],
+                "group_by": [{"kind": "product", "label": "product"}],
+                "aggregations": [
+                    {"kind": "event_count", "label": "events"},
+                    {"kind": "distinct_id_count", "label": "exact_distinct_ids"},
+                ],
+                "comparison_start": previous_start,
+                "comparison_end": current_start,
+            },
             project.pk,
             outputs,
         )
-        cross_two = await _call(
+        state = await _call(
             client,
-            "find_cross_product_accounts",
+            "analyze_group_state",
             {
-                "products": ["helpdesk", "contact_center"],
+                "group_type": "account",
+                "state_basis": "period_end",
                 "start": current_start,
                 "end": end,
             },
             project.pk,
             outputs,
         )
-        cross_three = await _call(
+        cross_product = await _call(
             client,
-            "find_cross_product_accounts",
+            "query_group_activity",
             {
-                "products": ["helpdesk", "contact_center", "bi"],
+                "group_type": "account",
                 "start": current_start,
                 "end": end,
-            },
-            project.pk,
-            outputs,
-        )
-        shared_overlap = await _call(
-            client,
-            "find_cross_product_accounts",
-            {
-                "products": ["helpdesk", "contact_center", "rise"],
-                "start": current_start,
-                "end": end,
+                "state_basis": "current",
+                "activity_rules": rules,
+                "match": "all",
+                "include_distinct_id_overlap": True,
             },
             project.pk,
             outputs,
         )
         adoption = await _call(
             client,
-            "analyze_product_adoption",
+            "analyze_group_adoption",
             {
-                "product": "contact_center",
+                "group_type": "account",
                 "start": current_start,
                 "end": end,
-                "include_plan_breakdown": True,
+                "state_basis": "period_end",
+                "eligibility_filters": [
+                    {"property_name": "segment", "operator": "eq", "value": "enterprise"}
+                ],
+                "activity_rule": {
+                    "label": "contact_center_activity",
+                    "event": "call_initiated",
+                    "product": "contact_center",
+                },
             },
             project.pk,
             outputs,
         )
-        users = await _call(
+        funnel = await _call(
             client,
-            "count_feature_users",
-            {"product": "contact_center", "start": current_start, "end": end},
-            project.pk,
-            outputs,
-        )
-        funnels = {}
-        for funnel in ("call_connection", "call_transfer", "callback"):
-            funnels[funnel] = await _call(
-                client,
-                "analyze_funnel",
-                {"funnel": funnel, "start": dataset_start, "end": end},
-                project.pk,
-                outputs,
-            )
-        decline = await _call(
-            client,
-            "analyze_account_change",
+            "analyze_group_funnel",
             {
-                "kind": "usage_decline",
-                "product": "contact_center",
-                "start": decline_start,
+                "group_type": "account",
+                "start": history_start,
                 "end": end,
+                "state_basis": "event_time",
+                "steps": [
+                    {"label": "initiated", "event": "call_initiated", "product": "contact_center"},
+                    {"label": "connected", "event": "call_connected", "product": "contact_center"},
+                ],
             },
             project.pk,
             outputs,
         )
-        abandonment = await _call(
+        transitions = await _call(
             client,
-            "analyze_account_change",
+            "analyze_group_transitions",
             {
-                "kind": "feature_abandonment",
-                "product": "contact_center",
-                "feature": "supervisor_whisper",
+                "group_type": "account",
+                "property_name": "contact_center_plan",
+                "start": history_start,
+                "end": end,
+                "state_basis": "event_time",
+            },
+            project.pk,
+            outputs,
+        )
+        comparison = await _call(
+            client,
+            "compare_group_activity",
+            {
+                "group_type": "account",
                 "start": current_start,
                 "end": end,
+                "comparison_start": previous_start,
+                "comparison_end": current_start,
+                "state_basis": "current",
+                "activity_rules": rules,
+                "match": "any",
             },
             project.pk,
             outputs,
         )
-        trials = await _call(
-            client,
-            "analyze_trial_outcomes",
-            {"product": "contact_center", "start": dataset_start, "end": end},
-            project.pk,
-            outputs,
-        )
 
-    assert catalog["counts"] == {
-        "events": 3527,
-        "group_profiles": 10,
-        "event_definitions": 24,
-    }
-    assert profile["found"] is True
-    assert profile["state_basis"] == "current_profile"
-    assert {"helpdesk", "contact_center", "bi"} <= set(activity["active_products"])
-    assert [item["account_key"] for item in cross_two["accounts"]["items"]] == [
-        "acme",
-        "juliet",
-    ]
-    assert [item["account_key"] for item in cross_three["accounts"]["items"]] == ["acme"]
-    overlap = shared_overlap["user_overlap"]
-    assert overlap["population_basis"] == (
-        "all_accounts_with_activity_in_any_requested_product"
-    )
-    assert overlap["users_by_product"]["rise"] > 0
-    assert overlap["pairwise_overlap"]["contact_center|helpdesk"] > 0
-    assert overlap["pairwise_overlap"]["helpdesk|rise"] > 0
+    assert catalog["counts"]["event_definitions"] == 24
+    assert catalog["event_properties"]["returned_count"] > 0
+    assert catalog["group_properties"]["returned_count"] > 0
+    assert event_activity["rows"]["returned_count"] > 0
+    assert event_activity["comparison"]["current"]["returned_count"] > 0
+    assert state["state_basis"] == "period_end"
+    assert state["groups"]["total_count"] == 10
+    assert state["groups"]["returned_count"] == 10
+    assert [row["group_key"] for row in cross_product["groups"]["items"]] == ["acme"]
+    overlap = cross_product["distinct_id_overlap"]
+    assert overlap["basis"] == "exact distinct_id string equality"
+    assert overlap["identity_resolution_performed"] is False
+    assert "does not establish" in overlap["zero_result_interpretation"]
+    assert adoption["eligibility_filters"]
+    assert adoption["denominator"] > 0
+    assert funnel["steps"][0]["cohort_count"] >= funnel["steps"][1]["cohort_count"]
+    assert transitions["state_basis"] == "event_time"
+    assert comparison["match"] == "any"
 
-    assert adoption["interpretation"]["entitlement_basis"] == "period_end"
-    assert adoption["interpretation"]["plan_attribution_basis"] == "event_time"
-    assert adoption["overall"]["period_end_entitled_adoption"] == {
-        "numerator": 6,
-        "denominator": 8,
-        "rate": 75.0,
-    }
-    assert adoption["overall"]["entitled_without_usage"]["items"] == ["charlie", "hotel"]
-    listen_classification = adoption["features"]["supervisor_listen"][
-        "high_adoption_low_depth"
-    ]
-    assert listen_classification == {
-        "adoption_numerator": 5,
-        "adoption_denominator": 8,
-        "adoption_rate": 62.5,
-        "adoption_rate_threshold": 50.0,
-        "minimum_account_threshold": 2,
-        "median_depth_threshold": 2.0,
-        "actual_median_depth": 1.0,
-        "classified": True,
-    }
-    assert adoption["plans"]["pro"]["features"]["supervisor_listen"]["rate"] == 75.0
-    acme_users = next(item for item in users["accounts"]["items"] if item["account_key"] == "acme")
-    assert acme_users["features"]["call_transfer"] == 4
-    assert acme_users["features"]["supervisor_listen"] == 2
-
-    assert all(result["started"] > result["completed"] for result in funnels.values())
-    assert "golf" in [item["account_key"] for item in decline["accounts"]["items"]]
-    assert [item["account_key"] for item in abandonment["accounts"]["items"]] == ["hotel"]
-    assert [item["account_key"] for item in trials["used_before_conversion"]["items"]] == ["echo"]
-    assert [item["account_key"] for item in trials["used_then_expired"]["items"]] == ["foxtrot"]
-
-    for payload in outputs.values():
-        if "period" in payload:
-            assert payload["interpretation"]
     serialized = json.dumps(outputs, sort_keys=True)
-    assert "distinct_id" not in serialized
     for event in dataset.behavioral_events:
         assert event["distinct_id"] not in serialized
