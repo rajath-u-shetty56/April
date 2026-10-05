@@ -4,6 +4,13 @@ April is an internal product analytics prototype for collecting business events 
 products and making that data available through deterministic analytics queries and an AI/MCP
 interface.
 
+## Demo
+
+[Watch the April Analytics demo](https://github.com/rajath-u-shetty56/April/releases/download/demo-v1/april-demo.mp4)
+
+The demo uses synthetic product data to show event ingestion, cross-product analysis through the
+MCP, and verification of the same results in PostHog.
+
 The current implementation includes:
 
 - Django and PostgreSQL application setup;
